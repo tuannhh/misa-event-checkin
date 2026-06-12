@@ -728,11 +728,20 @@ function userFormModal(u, onSaved) {
 async function pageSmtp(main) {
   const s = await api('/smtp');
   main.innerHTML = `
-  <div class="page-head"><h2>Cấu hình Email (SMTP)</h2></div>
-  <div class="hint">💡 <b>Dùng Gmail:</b> vào <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a>
-    (cần bật xác minh 2 bước trước) → tạo <b>Mật khẩu ứng dụng</b> 16 ký tự → dán vào ô "Mật khẩu" bên dưới.
-    Máy chủ: <code>smtp.gmail.com</code>, cổng <code>465</code>.</div>
+  <div class="page-head"><h2>Cấu hình gửi Email</h2></div>
   <div class="card" style="max-width:560px">
+    <h3>⚡ Kênh 1: Brevo (khuyên dùng cho bản website online)</h3>
+    <div class="hint" style="margin-top:10px">Nền tảng cloud (Railway) chặn gửi email kiểu Gmail/SMTP, nên bản online cần dùng <b>Brevo</b> — miễn phí 300 email/ngày:<br>
+      1. Tạo tài khoản tại <a href="https://www.brevo.com" target="_blank">brevo.com</a> (đăng ký bằng email của bạn)<br>
+      2. Vào góc phải trên → <b>SMTP &amp; API</b> → tab <b>API Keys</b> → <b>Generate a new API key</b><br>
+      3. Copy key (bắt đầu bằng <code>xkeysib-</code>) dán vào ô dưới. Nếu điền key, hệ thống sẽ ưu tiên gửi qua Brevo.</div>
+    <label>Brevo API Key</label><input id="sm-brevo" value="${esc(s.brevo_api_key)}" placeholder="xkeysib-...">
+    <label>Email người gửi (đúng email đã đăng ký Brevo)</label><input id="sm-sender" value="${esc(s.sender_email)}" placeholder="bạn@gmail.com">
+  </div>
+  <div class="card" style="max-width:560px">
+    <h3>📮 Kênh 2: Gmail/SMTP (dùng khi chạy trên máy tính)</h3>
+    <div class="hint" style="margin-top:10px">Vào <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a>
+    (cần bật xác minh 2 bước) → tạo <b>Mật khẩu ứng dụng</b> 16 ký tự → dán vào ô "Mật khẩu".</div>
     <div class="row2">
       <div><label>Máy chủ SMTP</label><input id="sm-host" value="${esc(s.host)}"></div>
       <div><label>Cổng</label><input id="sm-port" type="number" value="${s.port}"></div>
@@ -740,7 +749,9 @@ async function pageSmtp(main) {
     <label><input type="checkbox" id="sm-secure" style="width:auto;margin-right:8px" ${s.secure ? 'checked' : ''}>Kết nối bảo mật SSL (cổng 465)</label>
     <label>Email gửi đi (tài khoản Gmail)</label><input id="sm-user" value="${esc(s.smtp_user)}" placeholder="bạn@gmail.com">
     <label>Mật khẩu (App Password 16 ký tự)</label><input id="sm-pass" value="${esc(s.smtp_pass)}" placeholder="abcd efgh ijkl mnop">
-    <label>Tên người gửi hiển thị</label><input id="sm-from" value="${esc(s.from_name)}">
+  </div>
+  <div class="card" style="max-width:560px">
+    <label style="margin-top:0">Tên người gửi hiển thị (chung cho cả 2 kênh)</label><input id="sm-from" value="${esc(s.from_name)}">
     <div class="modal-actions" style="justify-content:flex-start">
       <button class="btn" id="sm-save">💾 Lưu</button>
       <button class="btn secondary" id="sm-test">📨 Gửi email kiểm tra</button>
@@ -754,8 +765,10 @@ async function pageSmtp(main) {
       smtp_user: document.getElementById('sm-user').value,
       smtp_pass: document.getElementById('sm-pass').value.replace(/\s/g, ''),
       from_name: document.getElementById('sm-from').value,
+      brevo_api_key: document.getElementById('sm-brevo').value.trim(),
+      sender_email: document.getElementById('sm-sender').value.trim(),
     } });
-    toast('Đã lưu cấu hình SMTP');
+    toast('Đã lưu cấu hình email');
   };
   document.getElementById('sm-test').onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = 'Đang gửi...';

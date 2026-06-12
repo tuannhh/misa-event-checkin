@@ -8,7 +8,7 @@ const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
-const { sendConfirmEmail, getTransport, buildEmail, fillTemplate } = require('../email');
+const { sendConfirmEmail, getTransport, deliver, buildEmail, fillTemplate } = require('../email');
 const { UPLOAD_DIR } = require('../config');
 
 const router = express.Router();
@@ -368,6 +368,14 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
   res.json({ added, errors, auto_email: !!(settings.auto_send_confirm && getTransport()) });
 });
 
+// Ảnh QR công khai theo mã token (dùng trong email gửi qua Brevo - ai có token tức là chủ của mã QR đó)
+router.get('/qr/:token.png', async (req, res) => {
+  const a = db.prepare('SELECT qr_token FROM attendees WHERE qr_token = ?').get(req.params.token);
+  if (!a) return res.status(404).end();
+  const png = await QRCode.toBuffer(a.qr_token, { width: 300, margin: 2 });
+  res.type('png').send(png);
+});
+
 // Xem ảnh QR của 1 người (cho quản trị viên kiểm tra)
 router.get('/attendees/:id/qr.png', requireLogin, async (req, res) => {
   if (req.params.id === '0') { // ảnh QR mẫu cho phần xem trước email
@@ -533,26 +541,27 @@ router.get('/events/:id/email-preview', requireLogin, (req, res) => {
 // ============ CẤU HÌNH SMTP (gửi email) ============
 router.get('/smtp', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
   const s = db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
-  res.json({ ...s, smtp_pass: s.smtp_pass ? '********' : '' });
+  res.json({ ...s, smtp_pass: s.smtp_pass ? '********' : '', brevo_api_key: s.brevo_api_key ? '********' : '' });
 });
 router.put('/smtp', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
   const cur = db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
   const b = req.body;
   const pass = (b.smtp_pass && b.smtp_pass !== '********') ? b.smtp_pass : cur.smtp_pass;
-  db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=? WHERE id=1')
-    .run(b.host || 'smtp.gmail.com', Number(b.port) || 465, b.secure ? 1 : 0, b.smtp_user || '', pass, b.from_name || '');
+  const brevoKey = b.brevo_api_key === '********' ? cur.brevo_api_key : (b.brevo_api_key || '').trim();
+  db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=?, brevo_api_key=?, sender_email=? WHERE id=1')
+    .run(b.host || 'smtp.gmail.com', Number(b.port) || 465, b.secure ? 1 : 0, b.smtp_user || '', pass, b.from_name || '', brevoKey, (b.sender_email || '').trim());
   res.json({ ok: true });
 });
 router.post('/smtp/test', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
   const t = getTransport();
-  if (!t) return res.status(400).json({ error: 'Chưa nhập đủ thông tin SMTP' });
+  if (!t) return res.status(400).json({ error: 'Chưa nhập đủ thông tin gửi email' });
   try {
-    await t.transporter.sendMail({
-      from: t.from, to: req.user.email,
-      subject: 'Email kiểm tra - Hệ thống Check-in',
-      html: 'Cấu hình email của bạn đã hoạt động! ✔',
+    await deliver(t, {
+      to: req.user.email,
+      subject: 'Email kiểm tra - MISA Event Check-in',
+      html: `Cấu hình email của bạn đã hoạt động! ✔ (Kênh gửi: ${t.provider === 'brevo' ? 'Brevo' : 'SMTP'})`,
     });
-    res.json({ ok: true, message: `Đã gửi email kiểm tra tới ${req.user.email}` });
+    res.json({ ok: true, message: `Đã gửi email kiểm tra tới ${req.user.email} qua ${t.provider === 'brevo' ? 'Brevo' : 'SMTP'}` });
   } catch (e) { res.status(400).json({ error: 'Gửi thất bại: ' + e.message }); }
 });
 

@@ -6,10 +6,21 @@ const fs = require('fs');
 const db = require('./db');
 const { UPLOAD_DIR } = require('./config');
 
+// Địa chỉ công khai của website (cần cho ảnh trong email khi gửi qua Brevo)
+const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
+
+function getSettings() {
+  return db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
+}
+
 function getTransport() {
-  const s = db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
-  if (!s || !s.smtp_user || !s.smtp_pass) return null;
+  const s = getSettings();
+  if (!s) return null;
+  if (s.brevo_api_key) return { provider: 'brevo', settings: s }; // ưu tiên Brevo nếu có key
+  if (!s.smtp_user || !s.smtp_pass) return null;
   return {
+    provider: 'smtp',
+    settings: s,
     transporter: nodemailer.createTransport({
       host: s.host,
       port: s.port,
@@ -18,6 +29,30 @@ function getTransport() {
     }),
     from: `"${s.from_name}" <${s.smtp_user}>`,
   };
+}
+
+// Gửi email qua Brevo API (HTTPS - hoạt động trên mọi nền tảng cloud)
+async function sendViaBrevo(s, to, subject, html) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': s.brevo_api_key, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({
+      sender: { name: s.from_name || 'Ban Tổ Chức', email: s.sender_email || s.smtp_user },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error('Brevo: ' + (err.message || res.status));
+  }
+}
+
+// Gửi 1 email qua kênh đang cấu hình (Brevo hoặc SMTP)
+async function deliver(t, { to, subject, html, attachments }) {
+  if (t.provider === 'brevo') return sendViaBrevo(t.settings, to, subject, html);
+  return t.transporter.sendMail({ from: t.from, to, subject, html, attachments });
 }
 
 function formatDate(iso) {
@@ -43,8 +78,9 @@ function bodyToHtml(body) {
 
 /**
  * Dựng email hoàn chỉnh (header + nội dung + footer).
- * mode = 'cid'  : ảnh nhúng dạng đính kèm (để gửi thật)
- * mode = 'web'  : ảnh dùng đường dẫn /uploads (để xem trước trên trình duyệt)
+ * mode = 'cid'    : ảnh nhúng dạng đính kèm (gửi qua SMTP)
+ * mode = 'web'    : ảnh dùng đường dẫn tương đối (xem trước trên trình duyệt)
+ * mode = 'remote' : ảnh dùng đường dẫn công khai đầy đủ (gửi qua Brevo)
  * Trả về { html, attachments }
  */
 function buildEmail(type, attendee, event, settings, mode) {
@@ -55,7 +91,9 @@ function buildEmail(type, attendee, event, settings, mode) {
 
   // Mã QR (chỉ email xác nhận)
   if (isConfirm) {
-    const qrSrc = mode === 'cid' ? 'cid:qrcode' : `/api/attendees/${attendee.id}/qr.png`;
+    const qrSrc = mode === 'cid' ? 'cid:qrcode'
+      : mode === 'remote' ? `${BASE_URL}/api/qr/${attendee.qr_token}.png`
+      : `/api/attendees/${attendee.id}/qr.png`;
     const qrImg = `<div style="text-align:center;margin:16px 0"><img src="${qrSrc}" alt="QR Code" style="width:220px"/>` +
       `<div style="font-family:monospace;font-size:12px;color:#6b7280;margin-top:4px">${attendee.qr_token}</div></div>`;
     if (/\{\{\s*qr_code\s*\}\}/.test(body)) body = body.replace(/\{\{\s*qr_code\s*\}\}/g, qrImg);
@@ -64,14 +102,13 @@ function buildEmail(type, attendee, event, settings, mode) {
 
   // Ảnh header / footer
   let headerHtml = '', footerHtml = '';
+  const imgSrc = (filename, cidName) => mode === 'cid' ? `cid:${cidName}` : (mode === 'remote' ? `${BASE_URL}/uploads/${filename}` : `/uploads/${filename}`);
   if (settings.header_image && fs.existsSync(path.join(UPLOAD_DIR, settings.header_image))) {
-    const src = mode === 'cid' ? 'cid:headerimg' : '/uploads/' + settings.header_image;
-    headerHtml = `<div style="text-align:center"><img src="${src}" alt="" style="width:${settings.header_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
+    headerHtml = `<div style="text-align:center"><img src="${imgSrc(settings.header_image, 'headerimg')}" alt="" style="width:${settings.header_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
     if (mode === 'cid') attachments.push({ filename: settings.header_image, path: path.join(UPLOAD_DIR, settings.header_image), cid: 'headerimg' });
   }
   if (settings.footer_image && fs.existsSync(path.join(UPLOAD_DIR, settings.footer_image))) {
-    const src = mode === 'cid' ? 'cid:footerimg' : '/uploads/' + settings.footer_image;
-    footerHtml = `<div style="text-align:center"><img src="${src}" alt="" style="width:${settings.footer_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
+    footerHtml = `<div style="text-align:center"><img src="${imgSrc(settings.footer_image, 'footerimg')}" alt="" style="width:${settings.footer_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
     if (mode === 'cid') attachments.push({ filename: settings.footer_image, path: path.join(UPLOAD_DIR, settings.footer_image), cid: 'footerimg' });
   }
 
@@ -89,15 +126,17 @@ function buildEmail(type, attendee, event, settings, mode) {
 // Gửi email xác nhận đăng ký kèm mã QR
 async function sendConfirmEmail(attendee, event, settings) {
   const t = getTransport();
-  if (!t) throw new Error('Chưa cấu hình SMTP (vào mục Cấu hình Email)');
+  if (!t) throw new Error('Chưa cấu hình gửi email (vào mục Cấu hình Email)');
   if (!attendee.email) throw new Error('Người tham dự không có email');
 
-  const { html, attachments } = buildEmail('confirm', attendee, event, settings, 'cid');
-  const qrPng = await QRCode.toBuffer(attendee.qr_token, { width: 300, margin: 2 });
-  attachments.push({ filename: 'qrcode.png', content: qrPng, cid: 'qrcode' });
+  const mode = t.provider === 'brevo' ? 'remote' : 'cid';
+  const { html, attachments } = buildEmail('confirm', attendee, event, settings, mode);
+  if (mode === 'cid') {
+    const qrPng = await QRCode.toBuffer(attendee.qr_token, { width: 300, margin: 2 });
+    attachments.push({ filename: 'qrcode.png', content: qrPng, cid: 'qrcode' });
+  }
 
-  await t.transporter.sendMail({
-    from: t.from,
+  await deliver(t, {
     to: attendee.email,
     subject: fillTemplate(settings.confirm_subject, attendee, event) || `Xác nhận đăng ký: ${event.name}`,
     html,
@@ -111,9 +150,9 @@ async function sendThankEmail(attendee, event, settings) {
   const t = getTransport();
   if (!t) return false;
   if (!attendee.email) return false;
-  const { html, attachments } = buildEmail('thank', attendee, event, settings, 'cid');
-  await t.transporter.sendMail({
-    from: t.from,
+  const mode = t.provider === 'brevo' ? 'remote' : 'cid';
+  const { html, attachments } = buildEmail('thank', attendee, event, settings, mode);
+  await deliver(t, {
     to: attendee.email,
     subject: fillTemplate(settings.thank_subject, attendee, event) || `Cảm ơn bạn đã tham dự ${event.name}`,
     html,
@@ -150,4 +189,4 @@ function startThankYouScheduler() {
   }, 60 * 1000);
 }
 
-module.exports = { sendConfirmEmail, sendThankEmail, startThankYouScheduler, getTransport, buildEmail, fillTemplate };
+module.exports = { sendConfirmEmail, sendThankEmail, startThankYouScheduler, getTransport, deliver, buildEmail, fillTemplate };

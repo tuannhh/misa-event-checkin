@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
 );
 `);
 
+// Nâng cấp CSDL cũ: thêm cột Brevo (gửi email qua HTTPS - dùng cho cloud vì Railway chặn SMTP)
+const smtpCols = db.prepare("PRAGMA table_info(smtp_settings)").all().map(c => c.name);
+for (const [col, def] of [['brevo_api_key', "TEXT DEFAULT ''"], ['sender_email', "TEXT DEFAULT ''"]]) {
+  if (!smtpCols.includes(col)) db.exec(`ALTER TABLE smtp_settings ADD COLUMN ${col} ${def}`);
+}
+
 // Nâng cấp CSDL cũ: thêm cột ảnh header/footer email nếu chưa có
 const emailCols = db.prepare("PRAGMA table_info(email_settings)").all().map(c => c.name);
 for (const [col, def] of [

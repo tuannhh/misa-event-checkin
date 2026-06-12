@@ -64,6 +64,7 @@ function formatDate(iso) {
 // Thay các biến {{...}} trong nội dung email
 function fillTemplate(text, attendee, event) {
   return (text || '')
+    .replace(/\{\{\s*xung_ho\s*\}\}/g, attendee.salutation || 'Anh/Chị')
     .replace(/\{\{\s*ho_ten\s*\}\}/g, attendee.name)
     .replace(/\{\{\s*ten_su_kien\s*\}\}/g, event.name)
     .replace(/\{\{\s*thoi_gian\s*\}\}/g, formatDate(event.event_date))

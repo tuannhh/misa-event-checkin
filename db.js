@@ -65,6 +65,23 @@ CREATE TABLE IF NOT EXISTS email_settings (
   thank_enabled INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS booths (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  sort INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS booth_visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  booth_id INTEGER NOT NULL REFERENCES booths(id) ON DELETE CASCADE,
+  attendee_id INTEGER NOT NULL REFERENCES attendees(id) ON DELETE CASCADE,
+  visited_at TEXT DEFAULT (datetime('now')),
+  visited_by INTEGER REFERENCES users(id),
+  UNIQUE(booth_id, attendee_id)
+);
+
 CREATE TABLE IF NOT EXISTS smtp_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   host TEXT DEFAULT 'smtp.gmail.com',
@@ -80,6 +97,18 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
 const smtpCols = db.prepare("PRAGMA table_info(smtp_settings)").all().map(c => c.name);
 for (const [col, def] of [['brevo_api_key', "TEXT DEFAULT ''"], ['sender_email', "TEXT DEFAULT ''"]]) {
   if (!smtpCols.includes(col)) db.exec(`ALTER TABLE smtp_settings ADD COLUMN ${col} ${def}`);
+}
+
+// Nâng cấp CSDL cũ: thêm Xưng hô + Mức độ quan trọng cho người tham dự
+const attCols = db.prepare("PRAGMA table_info(attendees)").all().map(c => c.name);
+for (const [col, def] of [['salutation', "TEXT DEFAULT ''"], ['importance', "TEXT DEFAULT 'Bình thường'"]]) {
+  if (!attCols.includes(col)) db.exec(`ALTER TABLE attendees ADD COLUMN ${col} ${def}`);
+}
+
+// Nâng cấp CSDL cũ: thêm điều kiện đủ tham dự cho sự kiện
+const evCols = db.prepare("PRAGMA table_info(events)").all().map(c => c.name);
+for (const [col, def] of [['eligibility_field', "TEXT DEFAULT ''"], ['eligibility_values', "TEXT DEFAULT '[]'"]]) {
+  if (!evCols.includes(col)) db.exec(`ALTER TABLE events ADD COLUMN ${col} ${def}`);
 }
 
 // Nâng cấp CSDL cũ: thêm cột ảnh header/footer email nếu chưa có

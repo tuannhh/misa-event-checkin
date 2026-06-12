@@ -16,6 +16,16 @@ railway up --detach
 ```
 Chờ ~1-2 phút là bản mới lên sóng. (Lần đầu trên máy khác thì chạy `railway login` trước.)
 
+## Gửi email trên bản cloud: bắt buộc dùng Brevo
+
+Railway **chặn gửi email kiểu Gmail/SMTP** (chỉ gói Pro 20 USD/tháng mới mở). Vì vậy bản cloud dùng **Brevo** — gửi qua HTTPS, miễn phí 300 email/ngày:
+
+1. Tạo tài khoản tại https://www.brevo.com (đăng ký bằng tuanbui88vn@gmail.com).
+2. Góc phải trên → **SMTP & API** → tab **API Keys** → **Generate a new API key**.
+3. Copy key (dạng `xkeysib-...`) → vào website → menu **Cấu hình Email** → dán vào ô *Brevo API Key*, điền *Email người gửi* = email đã đăng ký Brevo → **Lưu** → **Gửi email kiểm tra**.
+
+Bản local (chạy trên máy tính) vẫn dùng Gmail như cũ, không cần Brevo.
+
 ## Lưu ý chi phí
 - Tài khoản mới có **credit dùng thử miễn phí**. Khi hết, cần nâng lên gói **Hobby (~5 USD/tháng)** để web chạy liên tục.
 - Xem mức dùng tại: https://railway.com/account/usage

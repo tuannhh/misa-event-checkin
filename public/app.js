@@ -108,11 +108,19 @@ function renderLogin() {
 async function pageEvents(main) {
   const events = await api('/events');
   const canCreate = ['super_admin', 'admin'].includes(USER.role);
+  // Nhân viên check-in chỉ có 1 sự kiện -> mở thẳng màn hình quét QR
+  if (USER.role === 'checkin' && events.length === 1) {
+    location.hash = '#/event/' + events[0].id + '/scan';
+    return;
+  }
+  const emptyMsg = USER.role === 'checkin'
+    ? 'Bạn chưa được gán vào sự kiện nào. Hãy liên hệ quản trị viên để được thêm vào sự kiện (mở sự kiện → tab Nhân viên → tích chọn tên bạn → Lưu).'
+    : 'Chưa có sự kiện nào.';
   main.innerHTML = `
   <div class="page-head"><h2>Sự kiện</h2>
     ${canCreate ? '<button class="btn" id="btn-new-event">+ Tạo sự kiện</button>' : ''}
   </div>
-  <div id="event-list">${events.length ? '' : '<div class="card muted">Chưa có sự kiện nào.</div>'}</div>`;
+  <div id="event-list">${events.length ? '' : `<div class="card muted">${emptyMsg}</div>`}</div>`;
   const list = document.getElementById('event-list');
   for (const ev of events) {
     const past = new Date(ev.event_date) < new Date(new Date().toDateString());
@@ -136,23 +144,50 @@ async function pageEvents(main) {
 }
 
 function eventFormModal(ev, onSaved) {
+  let curValues = [];
+  try { curValues = JSON.parse(ev?.eligibility_values || '[]'); } catch (e) {}
+  const fields = OPTIONS.eligibility_fields || {};
   openModal(`
     <h3>${ev ? 'Sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
     <label>Tên sự kiện *</label><input id="ef-name" value="${esc(ev?.name || '')}">
     <label>Thời gian tổ chức *</label><input type="datetime-local" id="ef-date" value="${ev ? ev.event_date.slice(0, 16) : ''}">
     <label>Trưởng ban tổ chức</label><input id="ef-org" value="${esc(ev?.organizer || '')}">
     ${USER.role === 'super_admin' ? `<label>Đơn vị</label><input id="ef-unit" value="${esc(ev?.unit || '')}" placeholder="VD: Công ty X">` : ''}
+    <div style="border:1px dashed var(--border);border-radius:10px;padding:12px;margin-top:14px">
+      <b>🎯 Điều kiện đủ tham dự</b>
+      <p class="muted" style="margin:4px 0 0">Người KHÔNG đạt điều kiện vẫn hiện trong danh sách nhưng bị khoá gửi email (gửi hàng loạt sẽ tự bỏ qua).</p>
+      <label>Xét theo trường</label>
+      <select id="ef-elig-field">
+        <option value="">Không áp dụng - tất cả đều đủ điều kiện</option>
+        ${Object.entries(fields).map(([k, f]) => `<option value="${k}" ${ev?.eligibility_field === k ? 'selected' : ''}>${f.label}</option>`).join('')}
+      </select>
+      <div id="ef-elig-values" style="margin-top:8px"></div>
+    </div>
     <div class="error-msg" id="ef-err"></div>
     <div class="modal-actions">
       <button class="btn secondary" onclick="closeModal()">Huỷ</button>
       <button class="btn" id="ef-save">Lưu</button>
     </div>`);
+
+  const valuesBox = document.getElementById('ef-elig-values');
+  function renderValues() {
+    const f = document.getElementById('ef-elig-field').value;
+    if (!f || !fields[f]) { valuesBox.innerHTML = ''; return; }
+    valuesBox.innerHTML = `<div class="muted" style="margin-bottom:4px">Tích các giá trị ĐƯỢC chấp nhận:</div>` +
+      fields[f].options.map(o => `<label style="font-weight:normal;display:flex;align-items:center;gap:8px;margin:3px 0">
+        <input type="checkbox" class="elig-cb" value="${esc(o)}" style="width:auto" ${curValues.includes(o) ? 'checked' : ''}>${esc(o)}</label>`).join('');
+  }
+  document.getElementById('ef-elig-field').onchange = renderValues;
+  renderValues();
+
   document.getElementById('ef-save').onclick = async () => {
     try {
       const body = {
         name: document.getElementById('ef-name').value,
         event_date: document.getElementById('ef-date').value,
         organizer: document.getElementById('ef-org').value,
+        eligibility_field: document.getElementById('ef-elig-field').value,
+        eligibility_values: [...document.querySelectorAll('.elig-cb:checked')].map(c => c.value),
       };
       if (USER.role === 'super_admin') body.unit = document.getElementById('ef-unit').value;
       if (ev) await api('/events/' + ev.id, { method: 'PUT', body });
@@ -172,7 +207,7 @@ async function pageEventDetail(main, id, tab) {
   tab = tab || (isCheckinStaff ? 'scan' : 'attendees');
   const tabs = isCheckinStaff
     ? [['scan', '📷 Quét QR'], ['attendees', '✅ Đã check-in']]
-    : [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR check-in'], ['email', '✉️ Cài đặt Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên check-in']];
+    : [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR'], ['booths', '🧭 Booth'], ['email', '✉️ Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên']];
 
   main.innerHTML = `
   <div class="page-head">
@@ -201,16 +236,53 @@ async function pageEventDetail(main, id, tab) {
   const content = document.getElementById('tab-content');
   if (tab === 'attendees') tabAttendees(content, ev);
   else if (tab === 'scan') tabScan(content, ev);
+  else if (tab === 'booths') tabBooths(content, ev);
   else if (tab === 'email') tabEmail(content, ev);
   else if (tab === 'report') tabReport(content, ev);
   else if (tab === 'staff') tabStaff(content, ev);
+}
+
+// ----- Tab: Booth (hành trình quét QR) -----
+async function tabBooths(box, ev) {
+  ev = await api('/events/' + ev.id);
+  box.innerHTML = `
+  <div class="card" style="max-width:640px">
+    <h3>🧭 Hành trình booth của sự kiện</h3>
+    <p class="muted" style="margin:6px 0 14px">Tạo danh sách các booth/gian hàng. Tại mỗi booth, nhân viên mở tab <b>Quét QR</b>, chọn đúng vị trí booth rồi quét mã của khách — hệ thống ghi nhận hành trình vào <b>Báo cáo</b> để chấm điểm hành vi.</p>
+    <div id="booth-list">
+      ${ev.booths.length ? ev.booths.map((b, i) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--border)">
+          <span class="badge blue">${i + 1}</span><b style="flex:1">${esc(b.name)}</b>
+          ${ev.can_manage ? `<button class="btn small danger" data-delbooth="${b.id}">✕</button>` : ''}
+        </div>`).join('') : '<p class="muted">Chưa có booth nào.</p>'}
+    </div>
+    ${ev.can_manage ? `
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <input id="booth-name" placeholder="Tên booth mới, VD: Booth AI - MISA AMIS">
+      <button class="btn" id="booth-add">+ Thêm</button>
+    </div>` : ''}
+  </div>`;
+  if (!ev.can_manage) return;
+  document.getElementById('booth-add').onclick = async () => {
+    const name = document.getElementById('booth-name').value.trim();
+    if (!name) return;
+    try { await api(`/events/${ev.id}/booths`, { method: 'POST', body: { name } }); tabBooths(box, ev); }
+    catch (e) { toast('Lỗi: ' + e.message); }
+  };
+  document.getElementById('booth-name').onkeydown = e => { if (e.key === 'Enter') document.getElementById('booth-add').click(); };
+  box.querySelectorAll('[data-delbooth]').forEach(b => b.onclick = async () => {
+    if (!confirm('Xoá booth này? Lịch sử quét tại booth cũng sẽ bị xoá.')) return;
+    await api('/booths/' + b.dataset.delbooth, { method: 'DELETE' });
+    tabBooths(box, ev);
+  });
 }
 
 // ----- Tab: Người tham dự -----
 async function tabAttendees(box, ev) {
   const rows = await api(`/events/${ev.id}/attendees`);
   const isCheckinStaff = USER.role === 'checkin';
-  const unsent = rows.filter(r => !r.confirm_email_sent_at && r.email).length;
+  const unsent = rows.filter(r => !r.confirm_email_sent_at && r.email && r.eligible).length;
+  const ineligible = rows.filter(r => !r.eligible).length;
   box.innerHTML = `
   ${ev.can_manage ? `<div class="toolbar">
     <button class="btn" id="btn-add-att">+ Thêm người</button>
@@ -219,27 +291,39 @@ async function tabAttendees(box, ev) {
     <input type="file" id="file-att" accept=".xlsx,.xls" style="display:none">
     <button class="btn green" id="btn-send-all" ${unsent ? '' : 'disabled'}>✉️ Gửi email QR cho người chưa nhận (${unsent})</button>
   </div>` : ''}
-  <div class="muted" style="margin-bottom:10px">${isCheckinStaff ? 'Danh sách khách ĐÃ check-in' : `Tổng: <b>${rows.length}</b> người đăng ký · Nút gửi email chỉ gửi cho người <b>chưa nhận</b>, không gửi trùng.`}</div>
+  <div class="muted" style="margin-bottom:10px">${isCheckinStaff ? 'Danh sách khách ĐÃ check-in. Bấm 🖨 để in mã QR ra giấy cho khách dùng tại các booth.' :
+    `Tổng: <b>${rows.length}</b> người đăng ký${ineligible ? ` · <span style="color:var(--red)"><b>${ineligible}</b> người không đủ điều kiện (không được gửi email)</span>` : ''} · Nút gửi email chỉ gửi cho người <b>chưa nhận</b>, không gửi trùng.`}</div>
   <div class="table-wrap"><table><thead><tr>
-    <th>Họ và tên</th><th>Email</th><th>SĐT</th><th>Chức vụ</th><th>Công ty</th><th>MST</th><th>Quy mô</th><th>Check-in</th><th>Email xác nhận</th>${ev.can_manage ? '<th></th>' : ''}
+    <th>Họ và tên</th><th>Mức độ</th><th>Email</th><th>SĐT</th><th>Chức vụ</th><th>Công ty</th><th>Quy mô</th><th>Check-in</th><th>Email xác nhận</th><th></th>
   </tr></thead><tbody id="att-body"></tbody></table></div>`;
 
+  const impBadge = (imp) => {
+    const cls = { 'VIP': 'orange', 'VVIP': 'red', 'Speaker': 'blue', 'Ban lãnh đạo': 'red', 'Ban Tổ chức': 'blue' }[imp] || 'gray';
+    return `<span class="badge ${cls}">${esc(imp || 'Bình thường')}</span>`;
+  };
   const body = document.getElementById('att-body');
   if (!rows.length) body.innerHTML = `<tr><td colspan="10" class="muted">Chưa có ai trong danh sách.</td></tr>`;
   for (const r of rows) {
-    const tr = el(`<tr>
-      <td><b>${esc(r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}</td>
+    const tr = el(`<tr ${r.eligible ? '' : 'style="background:#fef2f2"'}>
+      <td><b>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}
+        ${r.eligible ? '' : ' <span class="badge red">Không đủ ĐK</span>'}</td>
+      <td>${impBadge(r.importance)}</td>
       <td>${esc(r.email)}</td><td>${esc(r.phone)}</td><td>${esc(r.position)}</td><td>${esc(r.company)}</td>
-      <td>${esc(r.tax_code)}</td><td>${esc(r.company_size)}</td>
+      <td>${esc(r.company_size)}</td>
       <td>${r.checked_in_at ? `<span class="badge green">✓ ${fmtDate(r.checked_in_at, true)}</span>` : '<span class="badge gray">Chưa</span>'}</td>
       <td style="white-space:nowrap">${r.confirm_email_sent_at ? '<span class="badge green">Đã gửi</span>' : '<span class="badge gray">Chưa gửi</span>'}
-        ${ev.can_manage && r.email ? `<button class="btn small ${r.confirm_email_sent_at ? 'secondary' : 'green'}" data-mail="${r.id}">${r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi email'}</button>` : ''}</td>
-      ${ev.can_manage ? `<td style="white-space:nowrap">
+        ${ev.can_manage && r.email ? `<button class="btn small ${r.confirm_email_sent_at ? 'secondary' : 'green'}" data-mail="${r.id}" ${r.eligible ? '' : 'disabled title="Không đủ điều kiện tham dự"'}>${r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi email'}</button>` : ''}</td>
+      <td style="white-space:nowrap">
+        <button class="btn small secondary" data-print="${r.id}" title="In mã QR ra giấy">🖨</button>
+        ${ev.can_manage ? `
+        <button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button>
         <button class="btn small secondary" data-qr="${r.id}" title="Xem mã QR">QR</button>
-        <button class="btn small danger" data-del="${r.id}" title="Xoá">✕</button></td>` : ''}
+        <button class="btn small danger" data-del="${r.id}" title="Xoá">✕</button>` : ''}</td>
     </tr>`);
     body.appendChild(tr);
   }
+  body.querySelectorAll('[data-print]').forEach(b => b.onclick = () => printQr(rows.find(x => x.id == b.dataset.print), ev.name));
+  body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => attendeeFormModal(ev, () => tabAttendees(box, ev), rows.find(x => x.id == b.dataset.edit)));
 
   body.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => {
     const r = rows.find(x => x.id == b.dataset.qr);
@@ -281,6 +365,7 @@ async function tabAttendees(box, ev) {
     try {
       const r = await api(`/events/${ev.id}/send-all-emails`, { method: 'POST' });
       let msg = `Đã gửi ${r.sent}/${r.total} email.`;
+      if (r.skipped) msg += `\nĐã bỏ qua ${r.skipped} người không đủ điều kiện tham dự.`;
       if (r.errors.length) msg += '\nLỗi:\n' + r.errors.slice(0, 5).join('\n');
       alert(msg); tabAttendees(box, ev);
     } catch (err) { alert('Lỗi: ' + err.message); tabAttendees(box, ev); }
@@ -290,11 +375,15 @@ async function tabAttendees(box, ev) {
 function attendeeFields(prefix, data = {}) {
   return `
   <div class="row2">
+    <div><label>Xưng hô</label><select id="${prefix}-salu"><option value="">-- Chọn --</option>
+      ${OPTIONS.salutations.map(s => `<option ${data.salutation === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
     <div><label>Họ và tên *</label><input id="${prefix}-name" value="${esc(data.name || '')}"></div>
     <div><label>Email</label><input id="${prefix}-email" value="${esc(data.email || '')}"></div>
     <div><label>Số điện thoại</label><input id="${prefix}-phone" value="${esc(data.phone || '')}"></div>
     <div><label>Chức vụ</label><select id="${prefix}-pos"><option value="">-- Chọn --</option>
       ${OPTIONS.positions.map(p => `<option ${data.position === p ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+    <div><label>Mức độ quan trọng</label><select id="${prefix}-imp">
+      ${OPTIONS.importances.map(i => `<option ${(data.importance || 'Bình thường') === i ? 'selected' : ''}>${i}</option>`).join('')}</select></div>
     <div><label>Nơi công tác/Tên công ty</label><input id="${prefix}-company" value="${esc(data.company || '')}"></div>
     <div><label>MST công ty</label><input id="${prefix}-tax" value="${esc(data.tax_code || '')}"></div>
   </div>
@@ -303,39 +392,67 @@ function attendeeFields(prefix, data = {}) {
 }
 function readAttendeeFields(prefix) {
   const g = id => document.getElementById(`${prefix}-${id}`).value;
-  return { name: g('name'), email: g('email'), phone: g('phone'), position: g('pos'), company: g('company'), tax_code: g('tax'), company_size: g('size') };
+  return { name: g('name'), email: g('email'), phone: g('phone'), position: g('pos'), company: g('company'),
+    tax_code: g('tax'), company_size: g('size'), salutation: g('salu'), importance: g('imp') };
 }
 
-function attendeeFormModal(ev, onSaved) {
-  openModal(`<h3>Thêm người tham dự</h3>${attendeeFields('af')}
+// Form thêm mới HOẶC chỉnh sửa người tham dự (truyền attendee để sửa)
+function attendeeFormModal(ev, onSaved, attendee = null) {
+  openModal(`<h3>${attendee ? 'Sửa thông tin: ' + esc(attendee.name) : 'Thêm người tham dự'}</h3>${attendeeFields('af', attendee || {})}
     <div class="error-msg" id="af-err"></div>
     <div class="modal-actions"><button class="btn secondary" onclick="closeModal()">Huỷ</button>
-    <button class="btn" id="af-save">Thêm</button></div>`);
+    <button class="btn" id="af-save">${attendee ? 'Lưu thay đổi' : 'Thêm'}</button></div>`);
   document.getElementById('af-save').onclick = async () => {
     const body = readAttendeeFields('af');
+    const send = (extra = {}) => attendee
+      ? api(`/attendees/${attendee.id}`, { method: 'PUT', body: { ...body, ...extra } })
+      : api(`/events/${ev.id}/attendees`, { method: 'POST', body: { ...body, ...extra } });
     try {
-      await api(`/events/${ev.id}/attendees`, { method: 'POST', body });
-      closeModal(); toast('Đã thêm người tham dự'); onSaved();
+      await send();
+      closeModal(); toast(attendee ? 'Đã lưu thay đổi' : 'Đã thêm người tham dự'); onSaved();
     } catch (e) {
       if (e.data && e.data.duplicate) {
         if (confirm(e.message)) {
-          await api(`/events/${ev.id}/attendees`, { method: 'POST', body: { ...body, force: true } });
-          closeModal(); toast('Đã thêm (trùng SĐT)'); onSaved();
+          await send({ force: true });
+          closeModal(); toast('Đã lưu (trùng SĐT)'); onSaved();
         }
       } else document.getElementById('af-err').textContent = e.message;
     }
   };
 }
 
+// In mã QR ra giấy (đưa cho khách dùng tại các booth)
+function printQr(r, evName) {
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR - ${esc(r.name)}</title>
+    <style>body{font-family:Arial,sans-serif;text-align:center;padding:30px}h2{margin:4px 0}p{margin:4px 0;color:#444}</style></head>
+    <body>
+      <h2>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</h2>
+      <p>${esc(r.company || '')}</p>
+      <p><b>${esc(evName)}</b></p>
+      <img src="/api/attendees/${r.id}/qr.png" style="width:260px" onload="setTimeout(()=>window.print(),200)">
+      <p style="font-family:monospace">${esc(r.qr_token)}</p>
+      <p style="color:#888;font-size:12px">Dùng mã này để quét tại các booth trong sự kiện</p>
+    </body></html>`);
+  w.document.close();
+}
+
 // ----- Tab: Quét QR -----
 async function tabScan(box, ev) {
   const autoConfirm = localStorage.getItem('autoConfirm') !== '0'; // mặc định BẬT
+  ev = await api('/events/' + ev.id); // lấy danh sách booth mới nhất
+  const savedLoc = localStorage.getItem('scanLocation-' + ev.id) || '';
   box.innerHTML = `
   <div class="scan-layout">
     <div class="card">
-      <h3 style="margin-bottom:10px">📷 Camera quét mã</h3>
+      <label style="margin-top:0">📍 Vị trí quét</label>
+      <select id="scan-location" style="font-weight:600">
+        <option value="">🚪 Cổng check-in (ghi nhận tham dự)</option>
+        ${ev.booths.map(b => `<option value="${b.id}" ${String(b.id) === savedLoc ? 'selected' : ''}>🧭 Booth: ${esc(b.name)}</option>`).join('')}
+      </select>
+      <h3 style="margin:12px 0 10px">📷 Camera quét mã</h3>
       <div id="qr-reader"></div>
-      <label class="auto-toggle" style="font-weight:normal;display:flex;align-items:center;gap:8px;margin-top:10px">
+      <label class="auto-toggle" id="auto-wrap" style="font-weight:normal;display:flex;align-items:center;gap:8px;margin-top:10px">
         <input type="checkbox" id="auto-confirm" style="width:auto" ${autoConfirm ? 'checked' : ''}>
         <span>⚡ <b>Tự động check-in khi quét</b> — quét xong là biết kết quả ngay, không cần bấm xác nhận</span>
       </label>
@@ -352,15 +469,28 @@ async function tabScan(box, ev) {
   </div>`;
 
   const resultBox = document.getElementById('scan-result');
+  const locSelect = document.getElementById('scan-location');
+  locSelect.onchange = () => {
+    localStorage.setItem('scanLocation-' + ev.id, locSelect.value);
+    document.getElementById('auto-wrap').style.display = locSelect.value ? 'none' : 'flex'; // booth luôn ghi nhận ngay
+    resultBox.className = 'scan-result idle';
+    resultBox.textContent = locSelect.value ? 'Đang quét tại booth: ' + locSelect.options[locSelect.selectedIndex].text.replace('🧭 Booth: ', '') : 'Kết quả quét sẽ hiển thị ở đây';
+  };
+  if (savedLoc) document.getElementById('auto-wrap').style.display = 'none';
   document.getElementById('auto-confirm').onchange = (e) => localStorage.setItem('autoConfirm', e.target.checked ? '1' : '0');
   let busy = false;
 
   async function handleToken(token) {
     if (busy) return; busy = true;
     try {
-      const r = await api(`/events/${ev.id}/scan`, { method: 'POST', body: { token, auto_confirm: document.getElementById('auto-confirm').checked } });
+      const r = await api(`/events/${ev.id}/scan`, { method: 'POST', body: {
+        token,
+        booth_id: locSelect.value || null,
+        auto_confirm: document.getElementById('auto-confirm').checked,
+      } });
       showResult(r);
-      if (navigator.vibrate) navigator.vibrate(r.status === 'checked_in' || r.status === 'valid' ? 100 : [80, 60, 80, 60, 80]);
+      const good = ['checked_in', 'valid', 'booth_recorded'].includes(r.status);
+      if (navigator.vibrate) navigator.vibrate(good ? 100 : [80, 60, 80, 60, 80]);
     } catch (e) { toast('Lỗi: ' + e.message); }
     setTimeout(() => { busy = false; }, 1500); // tránh quét trùng liên tục
   }
@@ -368,7 +498,8 @@ async function tabScan(box, ev) {
   function showResult(r) {
     const a = r.attendee;
     const infoHtml = a ? `
-      <div class="info-line"><b>Họ tên:</b><span>${esc(a.name)}</span></div>
+      <div class="info-line"><b>Họ tên:</b><span>${esc((a.salutation ? a.salutation + ' ' : '') + a.name)}</span></div>
+      <div class="info-line"><b>Mức độ:</b><span><b style="color:${['VIP', 'VVIP', 'Ban lãnh đạo'].includes(a.importance) ? 'var(--red)' : 'inherit'}">${esc(a.importance || 'Bình thường')}</b></span></div>
       <div class="info-line"><b>Chức vụ:</b><span>${esc(a.position) || '—'}</span></div>
       <div class="info-line"><b>Công ty:</b><span>${esc(a.company) || '—'}</span></div>
       <div class="info-line"><b>Quy mô:</b><span>${esc(a.company_size) || '—'}</span></div>
@@ -376,8 +507,18 @@ async function tabScan(box, ev) {
       <div class="info-line"><b>Email:</b><span>${esc(a.email) || '—'}</span></div>` : '';
     if (r.status === 'checked_in') {
       resultBox.className = 'scan-result valid';
-      resultBox.innerHTML = `<h3 style="color:var(--green);font-size:24px">✅ CHECK-IN THÀNH CÔNG</h3>${infoHtml}
-        <div class="muted" style="margin-top:10px">Mã QR này đã hết hiệu lực, không thể dùng lại.</div>`;
+      resultBox.innerHTML = `<h3 style="color:var(--green);font-size:24px">✅ CHECK-IN THÀNH CÔNG</h3>${infoHtml}`;
+    } else if (r.status === 'booth_recorded') {
+      resultBox.className = 'scan-result valid';
+      resultBox.innerHTML = `<h3 style="color:var(--green);font-size:22px">🧭 ĐÃ GHI NHẬN BOOTH</h3>
+        <p style="margin-bottom:8px">${esc(r.message)}${r.gate_checked_in ? '' : ' <span class="badge orange">Khách chưa check-in cổng</span>'}</p>${infoHtml}`;
+    } else if (r.status === 'booth_already') {
+      resultBox.className = 'scan-result warn';
+      resultBox.innerHTML = `<h3 style="color:var(--orange)">🔁 Đã ghi nhận trước đó</h3><p style="margin-bottom:8px">${esc(r.message)}</p>${infoHtml}`;
+    } else if (r.status === 'already_checked') {
+      resultBox.className = 'scan-result warn';
+      resultBox.innerHTML = `<h3 style="color:var(--orange)">ℹ️ KHÁCH ĐÃ CHECK-IN RỒI</h3>
+        <p style="margin-bottom:8px">${esc(r.message)}</p>${infoHtml}`;
     } else if (r.status === 'valid') {
       resultBox.className = 'scan-result valid';
       resultBox.innerHTML = `<h3 style="color:var(--green)">✅ ${esc(r.message)}</h3>${infoHtml}
@@ -386,14 +527,9 @@ async function tabScan(box, ev) {
         try {
           await api(`/events/${ev.id}/checkin/${a.id}`, { method: 'POST' });
           resultBox.className = 'scan-result valid';
-          resultBox.innerHTML = `<h3 style="color:var(--green)">🎉 Check-in thành công!</h3>${infoHtml}
-            <div class="muted" style="margin-top:10px">Mã QR này đã hết hiệu lực, không thể dùng lại.</div>`;
+          resultBox.innerHTML = `<h3 style="color:var(--green)">🎉 Check-in thành công!</h3>${infoHtml}`;
         } catch (e) { toast('Lỗi: ' + e.message); }
       };
-    } else if (r.status === 'already_used') {
-      resultBox.className = 'scan-result bad';
-      resultBox.innerHTML = `<h3 style="color:var(--red)">⛔ MÃ ĐÃ ĐƯỢC SỬ DỤNG</h3>
-        <p style="margin-bottom:10px">${esc(r.message)}</p>${infoHtml}`;
     } else if (r.status === 'expired') {
       resultBox.className = 'scan-result warn';
       resultBox.innerHTML = `<h3 style="color:var(--orange)">⚠️ Mã đã hết hạn</h3><p>${esc(r.message)}</p>${infoHtml}`;
@@ -461,13 +597,16 @@ async function tabEmail(box, ev) {
   }
 
   box.innerHTML = `
-  <div class="hint">💡 Biến tự thay bằng thông tin thật: <code>{{ho_ten}}</code> tên khách · <code>{{ten_su_kien}}</code> tên sự kiện ·
+  <div class="hint">💡 Biến tự thay bằng thông tin thật: <code>{{xung_ho}}</code> Anh/Chị/Ông/Bà · <code>{{ho_ten}}</code> tên khách · <code>{{ten_su_kien}}</code> tên sự kiện ·
     <code>{{thoi_gian}}</code> thời gian · <code>{{cong_ty}}</code> công ty khách · <code>{{qr_code}}</code> vị trí ảnh mã QR (không đặt thì QR nằm cuối email).<br>
-    ✨ Nội dung có thể là <b>văn bản thường</b> hoặc <b>mã HTML</b> (dán HTML vào là hệ thống tự nhận). Ảnh header/footer tải lên bên dưới sẽ tự ghép vào đầu/cuối email. Bấm <b>Xem trước</b> để xem email hoàn chỉnh trước khi gửi.</div>
+    ✨ Nội dung có thể là <b>văn bản thường</b> hoặc <b>mã HTML</b> (dán HTML vào là hệ thống tự nhận). Chưa biết viết gì? Bấm <b>✨ Chèn nội dung gợi ý</b> rồi sửa theo ý. Ảnh header/footer áp dụng cho <b>cả 2 email</b> (xác nhận + cảm ơn). Bấm <b>👁 Xem trước</b> để xem email hoàn chỉnh trước khi gửi.</div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h3>✉️ Email xác nhận đăng ký (kèm mã QR)</h3>
-      <button class="btn secondary small" data-preview="confirm">👁 Xem trước</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn secondary small" data-suggest="confirm">✨ Chèn nội dung gợi ý</button>
+        <button class="btn secondary small" data-preview="confirm">👁 Xem trước</button>
+      </div>
     </div>
     <label><input type="checkbox" id="em-auto" style="width:auto;margin-right:8px" ${s.auto_send_confirm ? 'checked' : ''}>Tự động gửi ngay khi thêm người vào danh sách</label>
     <label>Tiêu đề email</label><input id="em-csub" value="${esc(s.confirm_subject)}" placeholder="Xác nhận đăng ký tham dự {{ten_su_kien}}">
@@ -481,7 +620,10 @@ async function tabEmail(box, ev) {
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h3>💚 Email cảm ơn sau check-in</h3>
-      <button class="btn secondary small" data-preview="thank">👁 Xem trước</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn secondary small" data-suggest="thank">✨ Chèn nội dung gợi ý</button>
+        <button class="btn secondary small" data-preview="thank">👁 Xem trước</button>
+      </div>
     </div>
     <label><input type="checkbox" id="em-ten" style="width:auto;margin-right:8px" ${s.thank_enabled ? 'checked' : ''}>Bật tự động gửi email cảm ơn</label>
     <label>Gửi sau khi check-in (phút)</label><input type="number" id="em-delay" value="${s.thank_delay_minutes}" min="1" style="max-width:160px">
@@ -531,6 +673,43 @@ async function tabEmail(box, ev) {
     await api(`/events/${ev.id}/email-image/${b.dataset.delimg}`, { method: 'DELETE' });
     tabEmail(box, ev);
   });
+  // Nội dung email gợi ý sẵn (HTML căn chỉnh đẹp, có thể sửa thoải mái)
+  const SUGGEST = {
+    confirm: {
+      subject: 'Xác nhận đăng ký tham dự {{ten_su_kien}}',
+      body: `<div style="text-align:center;padding:8px 0">
+  <h2 style="color:#1d4ed8;margin:0">XÁC NHẬN ĐĂNG KÝ THÀNH CÔNG</h2>
+</div>
+<p>Xin chào <b>{{xung_ho}} {{ho_ten}}</b>,</p>
+<p>Ban Tổ Chức trân trọng cảm ơn {{xung_ho}} đã đăng ký tham dự <b>{{ten_su_kien}}</b>, diễn ra vào <b>{{thoi_gian}}</b>.</p>
+<p>Để được tiếp đón chu đáo, {{xung_ho}} vui lòng xuất trình mã QR dưới đây cho nhân viên lễ tân khi đến check-in:</p>
+{{qr_code}}
+<p style="text-align:center;color:#6b7280;font-size:13px">Mã QR này cũng dùng để ghi nhận hành trình tham quan tại các booth trong sự kiện.</p>
+<p>Hotline hỗ trợ: <b>0948 217 721</b></p>
+<p>Xin trân trọng cảm ơn và hẹn gặp {{xung_ho}} tại <b>{{ten_su_kien}}</b>!</p>`,
+    },
+    thank: {
+      subject: 'Cảm ơn {{xung_ho}} đã tham dự {{ten_su_kien}}',
+      body: `<div style="text-align:center;padding:8px 0">
+  <h2 style="color:#16a34a;margin:0">CẢM ƠN {{xung_ho}} ĐÃ THAM DỰ!</h2>
+</div>
+<p>Thân gửi <b>{{xung_ho}} {{ho_ten}}</b>,</p>
+<p>Ban Tổ Chức trân trọng cảm ơn {{xung_ho}} đã dành thời gian tham dự <b>{{ten_su_kien}}</b>. Sự hiện diện của {{xung_ho}} là niềm vinh hạnh của chúng tôi.</p>
+<p>Tài liệu của sự kiện, {{xung_ho}} vui lòng xem tại: <a href="https://example.com/tai-lieu">bấm vào đây</a> <i>(nhớ thay link tài liệu thật)</i>.</p>
+<p>Hi vọng được gặp lại {{xung_ho}} trong các sự kiện tiếp theo!</p>
+<p>Trân trọng,<br><b>Ban Tổ Chức</b></p>`,
+    },
+  };
+  box.querySelectorAll('[data-suggest]').forEach(b => b.onclick = () => {
+    const t = b.dataset.suggest;
+    const subEl = document.getElementById(t === 'confirm' ? 'em-csub' : 'em-tsub');
+    const bodyEl = document.getElementById(t === 'confirm' ? 'em-cbody' : 'em-tbody');
+    if (bodyEl.value.trim() && !confirm('Nội dung hiện tại sẽ bị thay bằng nội dung gợi ý. Tiếp tục?')) return;
+    subEl.value = SUGGEST[t].subject;
+    bodyEl.value = SUGGEST[t].body;
+    toast('Đã chèn nội dung gợi ý - bạn sửa lại hotline/link rồi bấm Lưu nhé');
+  });
+
   // Xem trước email
   box.querySelectorAll('[data-preview]').forEach(b => b.onclick = async () => {
     await saveSettings(); // xem trước đúng nội dung đang soạn
@@ -554,35 +733,46 @@ async function tabReport(box, ev) {
     <div class="stat orange"><div class="num">${rp.walkin}</div><div class="lbl">Khách vãng lai</div></div>
     <div class="stat green"><div class="num">${rp.total ? Math.round(rp.checkedin / rp.total * 100) : 0}%</div><div class="lbl">Tỷ lệ tham dự</div></div>
   </div>
+  ${rp.booths.length ? `<div class="card"><b>🧭 Lượt ghé booth:</b>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+      ${rp.booths.map(b => `<span class="badge blue" style="font-size:13px;padding:6px 14px">${esc(b.name)}: <b>${b.visit_count}</b> lượt</span>`).join('')}
+    </div></div>` : ''}
   <div class="toolbar">
     <input id="rp-search" placeholder="🔍 Tìm tên, SĐT, công ty...">
     <select id="rp-status"><option value="">Tất cả trạng thái</option><option value="in">Đã check-in</option><option value="out">Chưa check-in</option></select>
+    <select id="rp-imp"><option value="">Tất cả mức độ</option>${rp.importances.map(i => `<option>${i}</option>`).join('')}</select>
     <select id="rp-pos"><option value="">Tất cả chức vụ</option>${rp.positions.map(p => `<option>${p}</option>`).join('')}</select>
     <select id="rp-size"><option value="">Tất cả quy mô</option>${rp.company_sizes.map(s => `<option>${s}</option>`).join('')}</select>
     <a class="btn green" href="/api/events/${ev.id}/report/export" download>⬇ Xuất Excel</a>
   </div>
   <div class="table-wrap"><table><thead><tr>
-    <th>Họ và tên</th><th>SĐT</th><th>Email</th><th>Chức vụ</th><th>Công ty</th><th>Quy mô</th><th>Check-in</th><th>Thời gian check-in</th><th>NV check-in</th>
+    <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian check-in</th><th>Booth đã ghé (${rp.booths.length})</th><th>NV check-in</th>
   </tr></thead><tbody id="rp-body"></tbody></table></div>`;
 
   function renderRows() {
     const q = document.getElementById('rp-search').value.toLowerCase();
     const st = document.getElementById('rp-status').value;
+    const imp = document.getElementById('rp-imp').value;
     const pos = document.getElementById('rp-pos').value;
     const size = document.getElementById('rp-size').value;
     const rows = rp.rows.filter(r =>
       (!q || (r.name + r.phone + r.company + r.email).toLowerCase().includes(q)) &&
       (!st || (st === 'in' ? r.checked_in_at : !r.checked_in_at)) &&
+      (!imp || r.importance === imp) &&
       (!pos || r.position === pos) && (!size || r.company_size === size));
     document.getElementById('rp-body').innerHTML = rows.length ? rows.map(r => `<tr>
-      <td><b>${esc(r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}</td>
-      <td>${esc(r.phone)}</td><td>${esc(r.email)}</td><td>${esc(r.position)}</td><td>${esc(r.company)}</td><td>${esc(r.company_size)}</td>
+      <td><b>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}${r.eligible ? '' : ' <span class="badge red">Không đủ ĐK</span>'}</td>
+      <td>${esc(r.importance || 'Bình thường')}</td>
+      <td>${esc(r.phone)}</td><td>${esc(r.company)}</td>
       <td>${r.checked_in_at ? '<span class="badge green">Có</span>' : '<span class="badge gray">Không</span>'}</td>
       <td>${r.checked_in_at ? fmtDate(r.checked_in_at, true) : ''}</td>
+      <td>${r.booth_visits.length
+        ? `<b>${r.booth_visits.length}</b> booth: ` + r.booth_visits.map(v => `<span class="badge blue" title="${fmtDate(v.visited_at, true)}">${esc(v.name)}</span>`).join(' ')
+        : '<span class="muted">—</span>'}</td>
       <td>${esc(r.checked_in_by_name || '')}</td></tr>`).join('')
-      : '<tr><td colspan="9" class="muted">Không có dữ liệu phù hợp.</td></tr>';
+      : '<tr><td colspan="8" class="muted">Không có dữ liệu phù hợp.</td></tr>';
   }
-  ['rp-search', 'rp-status', 'rp-pos', 'rp-size'].forEach(id => document.getElementById(id).oninput = renderRows);
+  ['rp-search', 'rp-status', 'rp-imp', 'rp-pos', 'rp-size'].forEach(id => document.getElementById(id).oninput = renderRows);
   renderRows();
 }
 

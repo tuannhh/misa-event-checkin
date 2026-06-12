@@ -8,6 +8,13 @@
 - Tài khoản Railway: tuanbui88vn@gmail.com (dự án `misa-event-checkin`).
 - Bảng điều khiển: https://railway.com/project/c891bd0c-0ebf-4137-a672-88524c609694
 
+## Kho code trên GitHub (để làm việc từ nhiều máy)
+
+- Kho riêng tư: **https://github.com/tuannhh/misa-event-checkin** (tài khoản GitHub: tuannhh)
+- Tải dự án về máy mới: `git clone https://github.com/tuannhh/misa-event-checkin.git` rồi `npm install`
+- Sau khi sửa code, đẩy bản mới lên GitHub: nhờ Claude "commit và push lên GitHub"
+- Trước khi bắt đầu làm trên máy nào, kéo bản mới nhất về: `git pull`
+
 ## Cách cập nhật website khi sửa code
 
 Mở PowerShell trong thư mục `event-checkin` và chạy:

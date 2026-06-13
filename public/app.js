@@ -392,7 +392,7 @@ async function tabAttendees(box, ev) {
     <input type="file" id="file-att" accept=".xlsx,.xls" style="display:none">
     <button class="btn green" id="btn-send-all" ${unsent ? '' : 'disabled'}>✉️ Gửi email QR cho người chưa nhận (${unsent})</button>
   </div>` : ''}
-  <div class="muted" style="margin-bottom:10px">${isCheckinStaff ? 'Danh sách khách ĐÃ check-in. Bấm 🖨 để in mã QR ra giấy cho khách dùng tại các booth.' :
+  <div class="muted" style="margin-bottom:10px">${isCheckinStaff ? 'Danh sách khách ĐÃ check-in tại sự kiện này.' :
     `Tổng: <b>${rows.length}</b> người đăng ký${ineligible ? ` · <span style="color:var(--red)"><b>${ineligible}</b> người không đủ điều kiện (không được gửi email)</span>` : ''} · Nút gửi email chỉ gửi cho người <b>chưa nhận</b>, không gửi trùng.`}</div>
   <div class="table-wrap"><table><thead><tr>
     <th>Họ và tên</th><th>Mức độ</th><th>Email</th><th>SĐT</th><th>Chức vụ</th><th>Công ty</th><th>Quy mô</th><th>Check-in</th><th>Email xác nhận</th><th></th>
@@ -415,7 +415,6 @@ async function tabAttendees(box, ev) {
       <td style="white-space:nowrap">${r.confirm_email_sent_at ? '<span class="badge green">Đã gửi</span>' : '<span class="badge gray">Chưa gửi</span>'}
         ${ev.can_manage && r.email ? `<button class="btn small ${r.confirm_email_sent_at ? 'secondary' : 'green'}" data-mail="${r.id}" ${r.eligible ? '' : 'disabled title="Không đủ điều kiện tham dự"'}>${r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi email'}</button>` : ''}</td>
       <td style="white-space:nowrap">
-        <button class="btn small secondary" data-print="${r.id}" title="In mã QR ra giấy">🖨</button>
         ${ev.can_manage ? `
         <button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button>
         <button class="btn small secondary" data-qr="${r.id}" title="Xem mã QR">QR</button>
@@ -423,7 +422,6 @@ async function tabAttendees(box, ev) {
     </tr>`);
     body.appendChild(tr);
   }
-  body.querySelectorAll('[data-print]').forEach(b => b.onclick = () => printQr(rows.find(x => x.id == b.dataset.print), ev.name));
   body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => attendeeFormModal(ev, () => tabAttendees(box, ev), rows.find(x => x.id == b.dataset.edit)));
 
   body.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => {
@@ -942,11 +940,13 @@ async function tabReport(box, ev) {
         ? `<b>${r.booth_visits.length}</b> booth: ` + r.booth_visits.map(v => `<span class="badge blue" title="${fmtDate(v.visited_at, true)}">${esc(v.name)}</span>`).join(' ')
         : '<span class="muted">—</span>'}</td>
       <td>${esc(r.checked_in_by_name || '')}</td>
-      ${ev.can_manage ? `<td><button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button></td>` : ''}</tr>`).join('')
+      ${ev.can_manage ? `<td style="white-space:nowrap"><button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button>${r.checked_in_at ? `<button class="btn small secondary" data-print="${r.id}" title="In tem QR cho khách">🖨</button>` : ''}</td>` : ''}</tr>`).join('')
       : `<tr><td colspan="${ev.can_manage ? 9 : 8}" class="muted">Không có dữ liệu phù hợp.</td></tr>`;
     if (ev.can_manage) {
       document.getElementById('rp-body').querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
         attendeeFormModal(ev, () => tabReport(box, ev), rp.rows.find(x => x.id == b.dataset.edit)));
+      document.getElementById('rp-body').querySelectorAll('[data-print]').forEach(b => b.onclick = () =>
+        printQr(rp.rows.find(x => x.id == b.dataset.print), ev.name));
     }
   }
   ['rp-search', 'rp-status', 'rp-imp', 'rp-pos', 'rp-size'].forEach(id => document.getElementById(id).oninput = renderRows);

@@ -32,6 +32,72 @@ function fmtDate(iso, isUtc) {
 }
 // Dùng <template> để tạo phần tử - bắt buộc với các dòng bảng <tr> (div sẽ làm hỏng cấu trúc bảng)
 function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+// Ngày hôm nay theo giờ Việt Nam (YYYY-MM-DD) - để khoá sự kiện theo đúng ngày tổ chức
+function todayYMD() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }); }
+function eventDayStatus(ev) {
+  const d = (ev.event_date || '').slice(0, 10);
+  if (!d) return 'today';
+  const t = todayYMD();
+  return d < t ? 'past' : d > t ? 'future' : 'today';
+}
+
+// ===== Chuyển đổi giữa Văn bản thường và HTML cho trình soạn email =====
+function isHtmlBody(v) { return /<[a-z][^>]*>/i.test(v || ''); }
+function htmlToPlain(html) {
+  return String(html || '')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function plainToHtml(text) {
+  const t = (text || '').trim();
+  if (!t) return '';
+  return t.split(/\n{2,}/).map(p => '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>').join('\n');
+}
+// Trình soạn nội dung email 2 chế độ: Văn bản (dễ dùng) và HTML (nâng cao)
+function bodyEditorHtml(prefix, value) {
+  const html = isHtmlBody(value);
+  const textVal = html ? htmlToPlain(value) : (value || '');
+  const htmlVal = html ? value : '';
+  return `
+  <label>Nội dung email</label>
+  <div class="body-tabs" data-prefix="${prefix}">
+    <button type="button" class="body-tab ${html ? '' : 'active'}" data-mode="text">📝 Văn bản (dễ dùng)</button>
+    <button type="button" class="body-tab ${html ? 'active' : ''}" data-mode="html">&lt;/&gt; HTML (nâng cao)</button>
+  </div>
+  <textarea id="${prefix}-text" class="body-area" ${html ? 'style="display:none"' : ''} placeholder="Gõ nội dung như viết tin nhắn, xuống dòng để ngắt đoạn. Có thể dùng các biến {{ho_ten}}, {{ten_su_kien}}, {{qr_code}}...">${esc(textVal)}</textarea>
+  <textarea id="${prefix}-html" class="body-area" ${html ? '' : 'style="display:none"'} placeholder="Dán mã HTML vào đây (dành cho người rành kỹ thuật).">${esc(htmlVal)}</textarea>
+  <input type="hidden" id="${prefix}-mode" value="${html ? 'html' : 'text'}">`;
+}
+function readBody(prefix) {
+  const mode = document.getElementById(`${prefix}-mode`).value;
+  return document.getElementById(`${prefix}-${mode}`).value;
+}
+// Gắn xử lý chuyển tab Văn bản <-> HTML cho mọi trình soạn trong khung
+function wireBodyEditors(box) {
+  box.querySelectorAll('.body-tabs').forEach(tabs => {
+    const prefix = tabs.dataset.prefix;
+    const modeInput = document.getElementById(`${prefix}-mode`);
+    const textArea = document.getElementById(`${prefix}-text`);
+    const htmlArea = document.getElementById(`${prefix}-html`);
+    tabs.querySelectorAll('.body-tab').forEach(btn => btn.onclick = () => {
+      const to = btn.dataset.mode, from = modeInput.value;
+      if (to === from) return;
+      if (to === 'html') {
+        htmlArea.value = plainToHtml(textArea.value); // văn bản -> HTML cơ bản
+      } else {
+        if (htmlArea.value.trim() && !confirm('Chuyển sang Văn bản? Định dạng HTML (màu sắc, cỡ chữ...) sẽ được giản lược thành văn bản thường.')) return;
+        textArea.value = htmlToPlain(htmlArea.value); // HTML -> văn bản
+      }
+      modeInput.value = to;
+      tabs.querySelectorAll('.body-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === to));
+      textArea.style.display = to === 'text' ? '' : 'none';
+      htmlArea.style.display = to === 'html' ? '' : 'none';
+    });
+  });
+}
 
 function openModal(html) {
   const root = document.getElementById('modal-root');
@@ -66,7 +132,7 @@ async function route() {
 function shellHtml(hash) {
   const isManager = ['super_admin', 'admin'].includes(USER.role);
   return `
-  <div class="topbar">
+  <div class="topbar"><div class="topbar-inner">
     <div class="logo"><img src="misa-logo.jpg" alt="MISA"><span>MISA Event Check-in</span></div>
     <nav>
       <a href="#/events" class="${hash.startsWith('#/event') || hash === '' ? 'active' : ''}">Sự kiện</a>
@@ -75,7 +141,7 @@ function shellHtml(hash) {
     </nav>
     <span class="user">${esc(USER.name)} · ${ROLE_NAMES[USER.role]}${USER.unit ? ' · ' + esc(USER.unit) : ''}</span>
     <button class="btn secondary small" id="btn-logout">Đăng xuất</button>
-  </div>
+  </div></div>
   <div class="container" id="main"></div>`;
 }
 
@@ -108,33 +174,39 @@ function renderLogin() {
 async function pageEvents(main) {
   const events = await api('/events');
   const canCreate = ['super_admin', 'admin'].includes(USER.role);
-  // Nhân viên check-in chỉ có 1 sự kiện -> mở thẳng màn hình quét QR
-  if (USER.role === 'checkin' && events.length === 1) {
-    location.hash = '#/event/' + events[0].id + '/scan';
-    return;
+  const isStaff = USER.role === 'checkin';
+  // Nhân viên check-in: nếu CHỈ có đúng 1 sự kiện tổ chức HÔM NAY -> mở thẳng màn hình quét QR
+  if (isStaff) {
+    const todays = events.filter(e => eventDayStatus(e) === 'today');
+    if (todays.length === 1) { location.hash = '#/event/' + todays[0].id + '/scan'; return; }
   }
-  const emptyMsg = USER.role === 'checkin'
+  const emptyMsg = isStaff
     ? 'Bạn chưa được gán vào sự kiện nào. Hãy liên hệ quản trị viên để được thêm vào sự kiện (mở sự kiện → tab Nhân viên → tích chọn tên bạn → Lưu).'
     : 'Chưa có sự kiện nào.';
   main.innerHTML = `
   <div class="page-head"><h2>Sự kiện</h2>
     ${canCreate ? '<button class="btn" id="btn-new-event">+ Tạo sự kiện</button>' : ''}
   </div>
+  ${isStaff && events.length ? '<div class="hint">📅 Bạn chỉ mở được sự kiện tổ chức <b>đúng ngày hôm nay</b>. Sự kiện chưa tới ngày hoặc đã kết thúc sẽ bị khoá.</div>' : ''}
   <div id="event-list">${events.length ? '' : `<div class="card muted">${emptyMsg}</div>`}</div>`;
   const list = document.getElementById('event-list');
   for (const ev of events) {
-    const past = new Date(ev.event_date) < new Date(new Date().toDateString());
+    const status = eventDayStatus(ev);
+    const locked = isStaff && status !== 'today';
+    const statusBadge = status === 'past' ? '<span class="badge gray">Đã kết thúc</span>'
+      : status === 'future' ? '<span class="badge orange">Chưa tới ngày tổ chức</span>'
+      : (isStaff ? '<span class="badge green">Đang diễn ra hôm nay</span>' : '');
     list.appendChild(el(`
-    <div class="event-card">
+    <div class="event-card" ${locked ? 'style="opacity:.6"' : ''}>
       <div>
-        <div class="ev-name" data-id="${ev.id}">${esc(ev.name)}</div>
-        <div class="muted">🕒 ${fmtDate(ev.event_date)} · 👤 Trưởng BTC: ${esc(ev.organizer) || '—'}${ev.unit ? ' · 🏢 ' + esc(ev.unit) : ''} · Tạo bởi: ${esc(ev.creator_name)}</div>
+        <div class="ev-name" ${locked ? '' : `data-id="${ev.id}"`}>${esc(ev.name)}</div>
+        <div class="muted">🕒 ${fmtDate(ev.event_date)} · 👤 Trưởng BTC: ${esc(ev.organizer) || '—'}${ev.unit ? ' · 🏢 ' + esc(ev.unit) : ''}${isStaff ? '' : ' · Tạo bởi: ' + esc(ev.creator_name)}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span class="badge blue">${ev.total_attendees} đăng ký</span>
-        <span class="badge green">${ev.total_checkedin} đã check-in</span>
-        ${past ? '<span class="badge gray">Đã diễn ra</span>' : ''}
-        <button class="btn small" data-open="${ev.id}">Mở</button>
+        ${isStaff ? '' : `<span class="badge blue">${ev.total_attendees} đăng ký</span><span class="badge green">${ev.total_checkedin} đã check-in</span>`}
+        ${statusBadge}
+        ${locked ? '<button class="btn small secondary" disabled>🔒 Khoá</button>'
+          : `<button class="btn small" data-open="${ev.id}">${isStaff ? '📷 Vào quét' : 'Mở'}</button>`}
       </div>
     </div>`));
   }
@@ -204,6 +276,25 @@ async function pageEventDetail(main, id, tab) {
   catch (e) { main.innerHTML = `<div class="card">${esc(e.message)} <a href="#/events">← Quay lại</a></div>`; return; }
 
   const isCheckinStaff = USER.role === 'checkin';
+  // Mục 3: nhân viên chỉ vào được sự kiện tổ chức ĐÚNG NGÀY hôm nay
+  if (isCheckinStaff) {
+    const st = eventDayStatus(ev);
+    if (st !== 'today') {
+      main.innerHTML = `
+      <div class="page-head"><div>
+        <a href="#/events" class="muted" style="text-decoration:none">← Tất cả sự kiện</a>
+        <h2 style="margin-top:4px">${esc(ev.name)}</h2>
+        <div class="muted">🕒 ${fmtDate(ev.event_date)}</div>
+      </div></div>
+      <div class="card" style="text-align:center;padding:40px 20px">
+        <div style="font-size:42px">🔒</div>
+        <h3 style="margin:10px 0">${st === 'future' ? 'Sự kiện chưa tới ngày tổ chức' : 'Sự kiện đã kết thúc'}</h3>
+        <p class="muted">Chỉ có thể quét mã vào <b>đúng ngày tổ chức</b> sự kiện.${st === 'future' ? ' Vui lòng quay lại đúng ngày diễn ra.' : ''}</p>
+        <a class="btn" href="#/events" style="margin-top:14px">← Về danh sách sự kiện</a>
+      </div>`;
+      return;
+    }
+  }
   tab = tab || (isCheckinStaff ? 'scan' : 'attendees');
   const tabs = isCheckinStaff
     ? [['scan', '📷 Quét QR'], ['attendees', '✅ Đã check-in']]
@@ -245,14 +336,24 @@ async function pageEventDetail(main, id, tab) {
 // ----- Tab: Booth (hành trình quét QR) -----
 async function tabBooths(box, ev) {
   ev = await api('/events/' + ev.id);
+  // Nhóm nhân viên theo vị trí được gán
+  const staffByBooth = {};
+  for (const s of (ev.staff || [])) { const k = s.booth_id || 0; (staffByBooth[k] = staffByBooth[k] || []).push(s.name); }
+  const gateStaff = staffByBooth[0] || [];
   box.innerHTML = `
-  <div class="card" style="max-width:640px">
+  <div class="card" style="max-width:680px">
     <h3>🧭 Hành trình booth của sự kiện</h3>
-    <p class="muted" style="margin:6px 0 14px">Tạo danh sách các booth/gian hàng. Tại mỗi booth, nhân viên mở tab <b>Quét QR</b>, chọn đúng vị trí booth rồi quét mã của khách — hệ thống ghi nhận hành trình vào <b>Báo cáo</b> để chấm điểm hành vi.</p>
+    <p class="muted" style="margin:6px 0 14px">Tạo danh sách các booth/gian hàng. Mỗi nhân viên được gán đứng tại 1 vị trí ở tab <b>Nhân viên</b> — khi họ mở tab <b>Quét QR</b>, hệ thống tự khoá đúng vị trí. Chỉ nhân viên được gán đúng booth quét mới ghi nhận lượt ghé vào <b>Báo cáo</b>.</p>
+    <div style="padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:10px">
+      🚪 <b>Cổng check-in</b> — Nhân viên: ${gateStaff.length ? gateStaff.map(esc).join(', ') : '<span class="muted">chưa gán ai</span>'}
+    </div>
     <div id="booth-list">
       ${ev.booths.length ? ev.booths.map((b, i) => `
-        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--border)">
-          <span class="badge blue">${i + 1}</span><b style="flex:1">${esc(b.name)}</b>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 8px;border-bottom:1px solid var(--border)">
+          <span class="badge blue">${i + 1}</span>
+          <div style="flex:1"><b>${esc(b.name)}</b><br>
+            <span class="muted">👤 Nhân viên: ${(staffByBooth[b.id] || []).length ? (staffByBooth[b.id]).map(esc).join(', ') : 'chưa gán ai'}</span>
+          </div>
           ${ev.can_manage ? `<button class="btn small danger" data-delbooth="${b.id}">✕</button>` : ''}
         </div>`).join('') : '<p class="muted">Chưa có booth nào.</p>'}
     </div>
@@ -421,18 +522,29 @@ function attendeeFormModal(ev, onSaved, attendee = null) {
   };
 }
 
-// In mã QR ra giấy (đưa cho khách dùng tại các booth)
+// In tem QR khổ nhỏ (máy in nhiệt) - chỉ gồm QR + danh xưng + họ tên + nơi công tác
+// Khổ tem mặc định 50×40mm; đổi LABEL_W/LABEL_H nếu dùng khổ khác.
 function printQr(r, evName) {
+  const LABEL_W = '50mm', LABEL_H = '40mm';
+  const fullName = (r.salutation ? r.salutation + ' ' : '') + r.name;
   const w = window.open('', '_blank');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR - ${esc(r.name)}</title>
-    <style>body{font-family:Arial,sans-serif;text-align:center;padding:30px}h2{margin:4px 0}p{margin:4px 0;color:#444}</style></head>
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tem QR</title>
+    <style>
+      @page { size: ${LABEL_W} ${LABEL_H}; margin: 0; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: ${LABEL_W}; }
+      .label { width: ${LABEL_W}; height: ${LABEL_H}; padding: 2mm 1.5mm; text-align: center;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial, sans-serif; }
+      .label img { width: 23mm; height: 23mm; }
+      .nm { font-size: 11px; font-weight: bold; line-height: 1.15; margin-top: 1mm; }
+      .co { font-size: 9px; color: #222; line-height: 1.1; margin-top: 0.5mm; }
+    </style></head>
     <body>
-      <h2>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</h2>
-      <p>${esc(r.company || '')}</p>
-      <p><b>${esc(evName)}</b></p>
-      <img src="/api/attendees/${r.id}/qr.png" style="width:260px" onload="setTimeout(()=>window.print(),200)">
-      <p style="font-family:monospace">${esc(r.qr_token)}</p>
-      <p style="color:#888;font-size:12px">Dùng mã này để quét tại các booth trong sự kiện</p>
+      <div class="label">
+        <img src="/api/attendees/${r.id}/qr.png" onload="setTimeout(()=>{window.print();},250)">
+        <div class="nm">${esc(fullName)}</div>
+        ${r.company ? `<div class="co">${esc(r.company)}</div>` : ''}
+      </div>
     </body></html>`);
   w.document.close();
 }
@@ -440,16 +552,26 @@ function printQr(r, evName) {
 // ----- Tab: Quét QR -----
 async function tabScan(box, ev) {
   const autoConfirm = localStorage.getItem('autoConfirm') !== '0'; // mặc định BẬT
-  ev = await api('/events/' + ev.id); // lấy danh sách booth mới nhất
+  ev = await api('/events/' + ev.id); // lấy danh sách booth + vị trí được gán mới nhất
   const savedLoc = localStorage.getItem('scanLocation-' + ev.id) || '';
+  const isStaff = USER.role === 'checkin';
+  const myBooth = ev.my_position && ev.my_position.booth_id ? ev.my_position.booth_id : '';
+  // Nhân viên: khoá cứng vị trí được gán (ô ẩn). Quản lý: chọn tự do.
+  const locationHtml = isStaff
+    ? `<label style="margin-top:0">📍 Vị trí của bạn</label>
+       <div style="font-weight:700;padding:11px 13px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;color:#1e40af">
+         ${myBooth ? '🧭 Booth: ' + esc(ev.my_position.name) : '🚪 Cổng check-in (ghi nhận tham dự)'}
+       </div>
+       <input type="hidden" id="scan-location" value="${myBooth}">`
+    : `<label style="margin-top:0">📍 Vị trí quét</label>
+       <select id="scan-location" style="font-weight:600">
+         <option value="">🚪 Cổng check-in (ghi nhận tham dự)</option>
+         ${ev.booths.map(b => `<option value="${b.id}" ${String(b.id) === savedLoc ? 'selected' : ''}>🧭 Booth: ${esc(b.name)}</option>`).join('')}
+       </select>`;
   box.innerHTML = `
   <div class="scan-layout">
     <div class="card">
-      <label style="margin-top:0">📍 Vị trí quét</label>
-      <select id="scan-location" style="font-weight:600">
-        <option value="">🚪 Cổng check-in (ghi nhận tham dự)</option>
-        ${ev.booths.map(b => `<option value="${b.id}" ${String(b.id) === savedLoc ? 'selected' : ''}>🧭 Booth: ${esc(b.name)}</option>`).join('')}
-      </select>
+      ${locationHtml}
       <h3 style="margin:12px 0 10px">📷 Camera quét mã</h3>
       <div id="qr-reader"></div>
       <label class="auto-toggle" id="auto-wrap" style="font-weight:normal;display:flex;align-items:center;gap:8px;margin-top:10px">
@@ -470,13 +592,23 @@ async function tabScan(box, ev) {
 
   const resultBox = document.getElementById('scan-result');
   const locSelect = document.getElementById('scan-location');
-  locSelect.onchange = () => {
-    localStorage.setItem('scanLocation-' + ev.id, locSelect.value);
-    document.getElementById('auto-wrap').style.display = locSelect.value ? 'none' : 'flex'; // booth luôn ghi nhận ngay
-    resultBox.className = 'scan-result idle';
-    resultBox.textContent = locSelect.value ? 'Đang quét tại booth: ' + locSelect.options[locSelect.selectedIndex].text.replace('🧭 Booth: ', '') : 'Kết quả quét sẽ hiển thị ở đây';
-  };
-  if (savedLoc) document.getElementById('auto-wrap').style.display = 'none';
+  const atBooth = () => !!locSelect.value; // đang quét tại booth (true) hay cổng (false)
+  // Tại booth thì luôn ghi nhận ngay -> ẩn nút tự xác nhận và nút thêm khách vãng lai (vãng lai chỉ ở cổng)
+  function applyLocUI() {
+    const wrap = document.getElementById('auto-wrap');
+    if (wrap) wrap.style.display = atBooth() ? 'none' : 'flex'; // tại booth luôn ghi nhận ngay
+    const wi = document.getElementById('btn-walkin');
+    if (wi) wi.textContent = atBooth() ? '+ Thêm khách vãng lai tại booth này' : '+ Khách chưa đăng ký trước (vãng lai)';
+  }
+  if (locSelect.tagName === 'SELECT') {
+    locSelect.onchange = () => {
+      localStorage.setItem('scanLocation-' + ev.id, locSelect.value);
+      applyLocUI();
+      resultBox.className = 'scan-result idle';
+      resultBox.textContent = atBooth() ? 'Đang quét tại booth: ' + locSelect.options[locSelect.selectedIndex].text.replace('🧭 Booth: ', '') : 'Kết quả quét sẽ hiển thị ở đây';
+    };
+  }
+  applyLocUI();
   document.getElementById('auto-confirm').onchange = (e) => localStorage.setItem('autoConfirm', e.target.checked ? '1' : '0');
   let busy = false;
 
@@ -505,9 +637,12 @@ async function tabScan(box, ev) {
       <div class="info-line"><b>Quy mô:</b><span>${esc(a.company_size) || '—'}</span></div>
       <div class="info-line"><b>SĐT:</b><span>${esc(a.phone) || '—'}</span></div>
       <div class="info-line"><b>Email:</b><span>${esc(a.email) || '—'}</span></div>` : '';
+    // Nút in thẻ QR (chỉ ở cổng check-in) - đưa cho khách để quét tại các booth
+    const printBtn = a ? `<button class="btn secondary" id="btn-print-badge" style="margin-top:12px;width:100%;justify-content:center">🖨 In thẻ QR cho khách</button>` : '';
+    const wirePrint = () => { const b = resultBox.querySelector('#btn-print-badge'); if (b) b.onclick = () => printQr(a, ev.name); };
     if (r.status === 'checked_in') {
       resultBox.className = 'scan-result valid';
-      resultBox.innerHTML = `<h3 style="color:var(--green);font-size:24px">✅ CHECK-IN THÀNH CÔNG</h3>${infoHtml}`;
+      resultBox.innerHTML = `<h3 style="color:var(--green);font-size:24px">✅ CHECK-IN THÀNH CÔNG</h3>${infoHtml}${printBtn}`;
     } else if (r.status === 'booth_recorded') {
       resultBox.className = 'scan-result valid';
       resultBox.innerHTML = `<h3 style="color:var(--green);font-size:22px">🧭 ĐÃ GHI NHẬN BOOTH</h3>
@@ -518,7 +653,7 @@ async function tabScan(box, ev) {
     } else if (r.status === 'already_checked') {
       resultBox.className = 'scan-result warn';
       resultBox.innerHTML = `<h3 style="color:var(--orange)">ℹ️ KHÁCH ĐÃ CHECK-IN RỒI</h3>
-        <p style="margin-bottom:8px">${esc(r.message)}</p>${infoHtml}`;
+        <p style="margin-bottom:8px">${esc(r.message)}</p>${infoHtml}${printBtn}`;
     } else if (r.status === 'valid') {
       resultBox.className = 'scan-result valid';
       resultBox.innerHTML = `<h3 style="color:var(--green)">✅ ${esc(r.message)}</h3>${infoHtml}
@@ -527,7 +662,8 @@ async function tabScan(box, ev) {
         try {
           await api(`/events/${ev.id}/checkin/${a.id}`, { method: 'POST' });
           resultBox.className = 'scan-result valid';
-          resultBox.innerHTML = `<h3 style="color:var(--green)">🎉 Check-in thành công!</h3>${infoHtml}`;
+          resultBox.innerHTML = `<h3 style="color:var(--green)">🎉 Check-in thành công!</h3>${infoHtml}${printBtn}`;
+          wirePrint();
         } catch (e) { toast('Lỗi: ' + e.message); }
       };
     } else if (r.status === 'expired') {
@@ -540,6 +676,7 @@ async function tabScan(box, ev) {
       resultBox.className = 'scan-result bad';
       resultBox.innerHTML = `<h3 style="color:var(--red)">❌ Mã không hợp lệ</h3><p>${esc(r.message)}</p>`;
     }
+    wirePrint();
   }
 
   // Khởi động camera
@@ -560,16 +697,20 @@ async function tabScan(box, ev) {
   document.getElementById('manual-token').onkeydown = e => { if (e.key === 'Enter') document.getElementById('btn-manual').click(); };
 
   document.getElementById('btn-walkin').onclick = () => {
+    const boothName = atBooth()
+      ? (locSelect.tagName === 'SELECT' ? locSelect.options[locSelect.selectedIndex].text.replace(/^🧭 Booth: /, '') : (ev.my_position ? ev.my_position.name : ''))
+      : '';
     openModal(`<h3>Thêm khách vãng lai</h3>
-      <p class="muted">Khách chưa đăng ký trước - sẽ được check-in ngay sau khi thêm.</p>
+      <p class="muted">${atBooth() ? 'Khách sẽ được check-in và ghi nhận ghé <b>booth: ' + esc(boothName) + '</b>.' : 'Khách chưa đăng ký trước - sẽ được check-in ngay sau khi thêm.'}</p>
       ${attendeeFields('wi')}
       <div class="error-msg" id="wi-err"></div>
       <div class="modal-actions"><button class="btn secondary" onclick="closeModal()">Huỷ</button>
-      <button class="btn green" id="wi-save">Thêm & Check-in</button></div>`);
+      <button class="btn green" id="wi-save">${atBooth() ? 'Thêm & ghi nhận booth' : 'Thêm & Check-in'}</button></div>`);
     document.getElementById('wi-save').onclick = async () => {
       try {
-        await api(`/events/${ev.id}/walkin`, { method: 'POST', body: readAttendeeFields('wi') });
-        closeModal(); toast('Đã thêm khách vãng lai và check-in thành công');
+        const r = await api(`/events/${ev.id}/walkin`, { method: 'POST', body: { ...readAttendeeFields('wi'), booth_id: locSelect.value || null } });
+        closeModal();
+        toast(r.booth_name ? 'Đã thêm khách vãng lai & ghi nhận ghé booth ' + r.booth_name : 'Đã thêm khách vãng lai và check-in thành công');
       } catch (e) { document.getElementById('wi-err').textContent = e.message; }
     };
   };
@@ -599,7 +740,7 @@ async function tabEmail(box, ev) {
   box.innerHTML = `
   <div class="hint">💡 Biến tự thay bằng thông tin thật: <code>{{xung_ho}}</code> Anh/Chị/Ông/Bà · <code>{{ho_ten}}</code> tên khách · <code>{{ten_su_kien}}</code> tên sự kiện ·
     <code>{{thoi_gian}}</code> thời gian · <code>{{cong_ty}}</code> công ty khách · <code>{{qr_code}}</code> vị trí ảnh mã QR (không đặt thì QR nằm cuối email).<br>
-    ✨ Nội dung có thể là <b>văn bản thường</b> hoặc <b>mã HTML</b> (dán HTML vào là hệ thống tự nhận). Chưa biết viết gì? Bấm <b>✨ Chèn nội dung gợi ý</b> rồi sửa theo ý. Ảnh header/footer áp dụng cho <b>cả 2 email</b> (xác nhận + cảm ơn). Bấm <b>👁 Xem trước</b> để xem email hoàn chỉnh trước khi gửi.</div>
+    ✨ Mỗi email có 2 chế độ soạn: <b>📝 Văn bản</b> (gõ như viết tin nhắn, không cần biết kỹ thuật) và <b>&lt;/&gt; HTML</b> (nâng cao). Chưa biết viết gì? Bấm <b>✨ Chèn nội dung gợi ý</b> rồi sửa theo ý. Ảnh header/footer áp dụng cho <b>cả 2 email</b> (xác nhận + cảm ơn). Bấm <b>👁 Xem trước</b> để xem email hoàn chỉnh trước khi gửi.</div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h3>✉️ Email xác nhận đăng ký (kèm mã QR)</h3>
@@ -610,7 +751,7 @@ async function tabEmail(box, ev) {
     </div>
     <label><input type="checkbox" id="em-auto" style="width:auto;margin-right:8px" ${s.auto_send_confirm ? 'checked' : ''}>Tự động gửi ngay khi thêm người vào danh sách</label>
     <label>Tiêu đề email</label><input id="em-csub" value="${esc(s.confirm_subject)}" placeholder="Xác nhận đăng ký tham dự {{ten_su_kien}}">
-    <label>Nội dung email (văn bản hoặc HTML)</label><textarea id="em-cbody" placeholder="Xin chào {{ho_ten}},&#10;&#10;Cảm ơn bạn đã đăng ký tham dự {{ten_su_kien}} diễn ra lúc {{thoi_gian}}.&#10;Vui lòng đưa mã QR dưới đây cho nhân viên khi đến check-in:&#10;&#10;{{qr_code}}&#10;&#10;Trân trọng!">${esc(s.confirm_body)}</textarea>
+    ${bodyEditorHtml('em-cbody', s.confirm_body)}
   </div>
   <div class="card">
     <h3>🖼️ Ảnh header / footer (dùng chung cho cả 2 email)</h3>
@@ -628,17 +769,19 @@ async function tabEmail(box, ev) {
     <label><input type="checkbox" id="em-ten" style="width:auto;margin-right:8px" ${s.thank_enabled ? 'checked' : ''}>Bật tự động gửi email cảm ơn</label>
     <label>Gửi sau khi check-in (phút)</label><input type="number" id="em-delay" value="${s.thank_delay_minutes}" min="1" style="max-width:160px">
     <label>Tiêu đề email</label><input id="em-tsub" value="${esc(s.thank_subject)}" placeholder="Cảm ơn bạn đã tham dự {{ten_su_kien}}">
-    <label>Nội dung email (văn bản hoặc HTML)</label><textarea id="em-tbody" placeholder="Xin chào {{ho_ten}},&#10;&#10;Cảm ơn bạn đã dành thời gian tham dự {{ten_su_kien}}. Hẹn gặp lại bạn ở các sự kiện tiếp theo!">${esc(s.thank_body)}</textarea>
+    ${bodyEditorHtml('em-tbody', s.thank_body)}
   </div>
   <button class="btn" id="em-save">💾 Lưu cài đặt</button>`;
+
+  wireBodyEditors(box); // bật chuyển tab Văn bản <-> HTML
 
   async function saveSettings() {
     await api(`/events/${ev.id}/email-settings`, { method: 'PUT', body: {
       confirm_subject: document.getElementById('em-csub').value,
-      confirm_body: document.getElementById('em-cbody').value,
+      confirm_body: readBody('em-cbody'),
       auto_send_confirm: document.getElementById('em-auto').checked,
       thank_subject: document.getElementById('em-tsub').value,
-      thank_body: document.getElementById('em-tbody').value,
+      thank_body: readBody('em-tbody'),
       thank_delay_minutes: document.getElementById('em-delay').value,
       thank_enabled: document.getElementById('em-ten').checked,
       header_width: document.getElementById('em-header-width')?.value,
@@ -677,6 +820,21 @@ async function tabEmail(box, ev) {
   const SUGGEST = {
     confirm: {
       subject: 'Xác nhận đăng ký tham dự {{ten_su_kien}}',
+      text: `XÁC NHẬN ĐĂNG KÝ THÀNH CÔNG
+
+Xin chào {{xung_ho}} {{ho_ten}},
+
+Ban Tổ Chức trân trọng cảm ơn {{xung_ho}} đã đăng ký tham dự {{ten_su_kien}}, diễn ra vào {{thoi_gian}}.
+
+Để được tiếp đón chu đáo, {{xung_ho}} vui lòng xuất trình mã QR dưới đây cho nhân viên lễ tân khi đến check-in:
+
+{{qr_code}}
+
+Mã QR này cũng dùng để ghi nhận hành trình tham quan tại các booth trong sự kiện.
+
+Hotline hỗ trợ: 0948 217 721
+
+Xin trân trọng cảm ơn và hẹn gặp {{xung_ho}} tại {{ten_su_kien}}!`,
       body: `<div style="text-align:center;padding:8px 0">
   <h2 style="color:#1d4ed8;margin:0">XÁC NHẬN ĐĂNG KÝ THÀNH CÔNG</h2>
 </div>
@@ -690,6 +848,18 @@ async function tabEmail(box, ev) {
     },
     thank: {
       subject: 'Cảm ơn {{xung_ho}} đã tham dự {{ten_su_kien}}',
+      text: `CẢM ƠN {{xung_ho}} ĐÃ THAM DỰ!
+
+Thân gửi {{xung_ho}} {{ho_ten}},
+
+Ban Tổ Chức trân trọng cảm ơn {{xung_ho}} đã dành thời gian tham dự {{ten_su_kien}}. Sự hiện diện của {{xung_ho}} là niềm vinh hạnh của chúng tôi.
+
+Tài liệu của sự kiện, {{xung_ho}} vui lòng xem tại: https://example.com/tai-lieu (nhớ thay link tài liệu thật).
+
+Hi vọng được gặp lại {{xung_ho}} trong các sự kiện tiếp theo!
+
+Trân trọng,
+Ban Tổ Chức`,
       body: `<div style="text-align:center;padding:8px 0">
   <h2 style="color:#16a34a;margin:0">CẢM ƠN {{xung_ho}} ĐÃ THAM DỰ!</h2>
 </div>
@@ -702,11 +872,13 @@ async function tabEmail(box, ev) {
   };
   box.querySelectorAll('[data-suggest]').forEach(b => b.onclick = () => {
     const t = b.dataset.suggest;
+    const prefix = t === 'confirm' ? 'em-cbody' : 'em-tbody';
     const subEl = document.getElementById(t === 'confirm' ? 'em-csub' : 'em-tsub');
-    const bodyEl = document.getElementById(t === 'confirm' ? 'em-cbody' : 'em-tbody');
-    if (bodyEl.value.trim() && !confirm('Nội dung hiện tại sẽ bị thay bằng nội dung gợi ý. Tiếp tục?')) return;
+    const mode = document.getElementById(`${prefix}-mode`).value; // chèn đúng theo tab đang mở
+    const area = document.getElementById(`${prefix}-${mode}`);
+    if (area.value.trim() && !confirm('Nội dung hiện tại sẽ bị thay bằng nội dung gợi ý. Tiếp tục?')) return;
     subEl.value = SUGGEST[t].subject;
-    bodyEl.value = SUGGEST[t].body;
+    area.value = mode === 'html' ? SUGGEST[t].body : SUGGEST[t].text;
     toast('Đã chèn nội dung gợi ý - bạn sửa lại hotline/link rồi bấm Lưu nhé');
   });
 
@@ -746,7 +918,7 @@ async function tabReport(box, ev) {
     <a class="btn green" href="/api/events/${ev.id}/report/export" download>⬇ Xuất Excel</a>
   </div>
   <div class="table-wrap"><table><thead><tr>
-    <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian check-in</th><th>Booth đã ghé (${rp.booths.length})</th><th>NV check-in</th>
+    <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian check-in</th><th>Booth đã ghé (${rp.booths.length})</th><th>NV check-in</th>${ev.can_manage ? '<th></th>' : ''}
   </tr></thead><tbody id="rp-body"></tbody></table></div>`;
 
   function renderRows() {
@@ -769,8 +941,13 @@ async function tabReport(box, ev) {
       <td>${r.booth_visits.length
         ? `<b>${r.booth_visits.length}</b> booth: ` + r.booth_visits.map(v => `<span class="badge blue" title="${fmtDate(v.visited_at, true)}">${esc(v.name)}</span>`).join(' ')
         : '<span class="muted">—</span>'}</td>
-      <td>${esc(r.checked_in_by_name || '')}</td></tr>`).join('')
-      : '<tr><td colspan="8" class="muted">Không có dữ liệu phù hợp.</td></tr>';
+      <td>${esc(r.checked_in_by_name || '')}</td>
+      ${ev.can_manage ? `<td><button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button></td>` : ''}</tr>`).join('')
+      : `<tr><td colspan="${ev.can_manage ? 9 : 8}" class="muted">Không có dữ liệu phù hợp.</td></tr>`;
+    if (ev.can_manage) {
+      document.getElementById('rp-body').querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
+        attendeeFormModal(ev, () => tabReport(box, ev), rp.rows.find(x => x.id == b.dataset.edit)));
+    }
   }
   ['rp-search', 'rp-status', 'rp-imp', 'rp-pos', 'rp-size'].forEach(id => document.getElementById(id).oninput = renderRows);
   renderRows();
@@ -781,25 +958,62 @@ async function tabStaff(box, ev) {
   if (!ev.can_manage) { box.innerHTML = '<div class="card muted">Bạn không có quyền quản lý mục này.</div>'; return; }
   ev = await api('/events/' + ev.id); // tải lại danh sách đã gán mới nhất
   const all = await api(`/events/${ev.id}/available-staff`);
-  const assigned = new Set(ev.staff.map(s => s.id));
+  const assignedMap = new Map(ev.staff.map(s => [s.id, s.booth_id || '']));
+  const boothOpts = ev.booths.map(b => `<option value="${b.id}">🧭 Booth: ${esc(b.name)}</option>`).join('');
   box.innerHTML = `
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <h3>Nhân viên check-in của sự kiện này</h3>
-      <button class="btn green" id="staff-new">+ Tạo tài khoản nhân viên mới</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn secondary" href="/api/events/${ev.id}/staff/template" download>⬇ File Excel mẫu</a>
+        <button class="btn secondary" id="staff-import">⬆ Import Excel</button>
+        <input type="file" id="staff-file" accept=".xlsx,.xls" style="display:none">
+        <button class="btn green" id="staff-new">+ Tạo tài khoản nhân viên mới</button>
+      </div>
     </div>
-    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên được phép quét QR tại sự kiện này, hoặc bấm nút trên để tạo tài khoản mới (tài khoản mới sẽ tự động được gán vào sự kiện).</p>
-    ${all.length ? all.map(u => `
-      <label style="font-weight:normal;display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--border);margin:0">
-        <input type="checkbox" style="width:auto" value="${u.id}" ${assigned.has(u.id) ? 'checked' : ''} class="staff-cb">
-        <span><b>${esc(u.name)}</b> · ${esc(u.email)}${u.unit ? ' · ' + esc(u.unit) : ''}</span>
-      </label>`).join('') : '<p class="muted">Chưa có tài khoản nhân viên check-in nào.</p>'}
+    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên được phép quét QR tại sự kiện này và <b>chọn vị trí họ đứng</b> (Cổng lễ tân hoặc 1 booth). Mỗi nhân viên chỉ đứng <b>1 vị trí</b>; 1 booth có thể có nhiều nhân viên. Khi nhân viên mở màn Quét QR, hệ thống tự khoá đúng vị trí được gán.</p>
+    ${all.length ? `<div class="table-wrap"><table><thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Vị trí đứng quét</th></tr></thead><tbody>` +
+      all.map(u => `<tr>
+        <td><input type="checkbox" style="width:auto" value="${u.id}" ${assignedMap.has(u.id) ? 'checked' : ''} class="staff-cb"></td>
+        <td><b>${esc(u.name)}</b><br><span class="muted">${esc(u.email)}${u.unit ? ' · ' + esc(u.unit) : ''}</span></td>
+        <td><select class="staff-pos" data-uid="${u.id}" style="min-width:200px" ${assignedMap.has(u.id) ? '' : 'disabled'}>
+          <option value="">🚪 Cổng check-in (ghi nhận tham dự)</option>${boothOpts}
+        </select></td>
+      </tr>`).join('') + `</tbody></table></div>`
+      : '<p class="muted">Chưa có tài khoản nhân viên check-in nào.</p>'}
     <button class="btn" id="staff-save" style="margin-top:14px">💾 Lưu danh sách</button>
   </div>`;
+  // Đặt sẵn vị trí đã gán cho từng nhân viên
+  box.querySelectorAll('.staff-pos').forEach(sel => {
+    const uid = Number(sel.dataset.uid);
+    if (assignedMap.has(uid)) sel.value = assignedMap.get(uid) || '';
+  });
+  // Tích/bỏ tích là bật/tắt ô chọn vị trí
+  box.querySelectorAll('.staff-cb').forEach(cb => cb.onchange = () => {
+    const sel = box.querySelector(`.staff-pos[data-uid="${cb.value}"]`);
+    if (sel) { sel.disabled = !cb.checked; if (!cb.checked) sel.value = ''; }
+  });
   document.getElementById('staff-save').onclick = async () => {
-    const ids = [...box.querySelectorAll('.staff-cb:checked')].map(c => Number(c.value));
-    await api(`/events/${ev.id}/staff`, { method: 'PUT', body: { user_ids: ids } });
+    const assignments = [...box.querySelectorAll('.staff-cb:checked')].map(cb => {
+      const sel = box.querySelector(`.staff-pos[data-uid="${cb.value}"]`);
+      return { user_id: Number(cb.value), booth_id: sel && sel.value ? Number(sel.value) : null };
+    });
+    await api(`/events/${ev.id}/staff`, { method: 'PUT', body: { assignments } });
     toast('Đã lưu danh sách nhân viên check-in');
+  };
+  // Import nhân viên từ Excel
+  const staffFile = document.getElementById('staff-file');
+  document.getElementById('staff-import').onclick = () => staffFile.click();
+  staffFile.onchange = async () => {
+    if (!staffFile.files[0]) return;
+    const fd = new FormData(); fd.append('file', staffFile.files[0]);
+    try {
+      const r = await api(`/events/${ev.id}/staff/import`, { method: 'POST', body: fd });
+      let msg = `Đã tạo mới ${r.added} nhân viên${r.assigned ? `, gán thêm ${r.assigned} người đã có sẵn` : ''}.`;
+      if (r.errors.length) msg += `\n${r.errors.length} dòng cần lưu ý:\n` + r.errors.slice(0, 8).join('\n');
+      alert(msg); tabStaff(box, ev);
+    } catch (e) { toast('Lỗi: ' + e.message); }
+    staffFile.value = '';
   };
   document.getElementById('staff-new').onclick = () => {
     openModal(`<h3>Tạo tài khoản Nhân viên check-in</h3>

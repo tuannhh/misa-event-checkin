@@ -1,4 +1,6 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* Chặn "kéo để tải lại" và hiệu ứng nảy trên điện thoại để nhân viên không vô tình reload khi quét */
+html, body { overscroll-behavior: none; }
 :root {
   --primary: #2563eb; --primary-dark: #1d4ed8; --green: #16a34a; --red: #dc2626;
   --orange: #ea580c; --gray: #6b7280; --bg: #f3f4f6; --card: #fff; --border: #e5e7eb;
@@ -13,7 +15,8 @@ button { cursor: pointer; font-family: inherit; }
 .login-box p { color: var(--gray); margin-bottom: 22px; }
 
 /* ===== Khung chính ===== */
-.topbar { background: #fff; border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; align-items: center; gap: 18px; height: 56px; position: sticky; top: 0; z-index: 50; }
+.topbar { background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 50; }
+.topbar-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 18px; height: 56px; }
 .topbar .logo { font-weight: 700; color: var(--primary-dark); font-size: 16px; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
 .topbar .logo img { height: 30px; width: auto; }
 .topbar nav { display: flex; gap: 4px; flex: 1; }
@@ -60,6 +63,12 @@ th { background: #f9fafb; font-weight: 600; color: #374151; white-space: nowrap;
 .tabs button { background: none; border: none; padding: 10px 16px; font-size: 14px; font-weight: 600; color: var(--gray); border-bottom: 3px solid transparent; margin-bottom: -2px; white-space: nowrap; }
 .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
 
+/* ===== Tab Văn bản / HTML trong soạn email ===== */
+.body-tabs { display: flex; gap: 6px; margin: 12px 0 0; }
+.body-tab { background: #f3f4f6; border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; padding: 7px 14px; font-size: 13px; font-weight: 600; color: var(--gray); }
+.body-tab.active { background: #fff; color: var(--primary); box-shadow: 0 2px 0 #fff; }
+.body-area { border-top-left-radius: 0; border-top-right-radius: 0; }
+
 /* ===== Thống kê ===== */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
 .stat { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; text-align: center; }
@@ -100,7 +109,7 @@ code { background: #e0e7ff; padding: 1px 6px; border-radius: 5px; font-size: 12.
 
 /* ===== Giao diện điện thoại (nhân viên check-in) ===== */
 @media (max-width: 640px) {
-  .topbar { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
+  .topbar-inner { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
   .topbar .logo span { font-size: 14px; }
   .topbar .logo img { height: 24px; }
   .topbar .user { display: none; }

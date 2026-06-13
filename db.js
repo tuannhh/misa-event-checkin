@@ -120,6 +120,10 @@ for (const [col, def] of [
   if (!emailCols.includes(col)) db.exec(`ALTER TABLE email_settings ADD COLUMN ${col} ${def}`);
 }
 
+// Nâng cấp CSDL cũ: gán nhân viên check-in vào 1 vị trí cố định (NULL = cổng lễ tân, hoặc 1 booth)
+const esCols = db.prepare("PRAGMA table_info(event_staff)").all().map(c => c.name);
+if (!esCols.includes('booth_id')) db.exec('ALTER TABLE event_staff ADD COLUMN booth_id INTEGER');
+
 // Bỏ vai trò Moderator: chuyển các tài khoản moderator cũ thành nhân viên check-in
 db.prepare("UPDATE users SET role = 'checkin' WHERE role = 'moderator'").run();
 

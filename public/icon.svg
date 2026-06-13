@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
+  <g fill="#ffffff">
+    <!-- 3 ô định vị kiểu mã QR -->
+    <path d="M108 108h108v108H108zM140 140v44h44v-44z"/>
+    <path d="M296 108h108v108H296zM328 140v44h44v-44z"/>
+    <path d="M108 296h108v108H108zM140 328v44h44v-44z"/>
+    <!-- các chấm dữ liệu -->
+    <rect x="296" y="296" width="40" height="40"/>
+    <rect x="364" y="296" width="40" height="40"/>
+    <rect x="296" y="364" width="40" height="40"/>
+    <rect x="364" y="364" width="40" height="40"/>
+  </g>
+</svg>

@@ -1,0 +1,15 @@
+{
+  "name": "MISA Event Check-in",
+  "short_name": "Check-in",
+  "description": "Quét QR check-in sự kiện MISA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e3a8a",
+  "theme_color": "#2563eb",
+  "lang": "vi",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

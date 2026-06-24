@@ -2,9 +2,12 @@
 # Kèm Litestream để sao lưu database SQLite xuống bucket (Cloud Storage) theo thời gian thực
 FROM node:20-slim
 
-# Cài Litestream (công cụ sao lưu SQLite liên tục)
+# Cài công cụ biên dịch (better-sqlite3 cần Python + C++) và Litestream (sao lưu SQLite liên tục)
 ADD https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.deb /tmp/litestream.deb
-RUN apt-get update && apt-get install -y /tmp/litestream.deb && rm /tmp/litestream.deb && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates python3 make g++ /tmp/litestream.deb \
+ && rm /tmp/litestream.deb \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

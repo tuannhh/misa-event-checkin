@@ -696,7 +696,8 @@ router.put('/events/:id/email-settings', requireLogin, (req, res) => {
   res.json({ ok: true });
 });
 
-// Upload ảnh header/footer cho email của sự kiện
+// Upload ảnh header/footer cho email của sự kiện (lưu thẳng vào database để Litestream sao lưu được)
+const MIME_BY_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
 router.post('/events/:id/email-image/:type', requireLogin, upload.single('file'), (req, res) => {
   const ev = getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
@@ -704,15 +705,13 @@ router.post('/events/:id/email-image/:type', requireLogin, upload.single('file')
   if (!['header', 'footer'].includes(type)) return res.status(400).json({ error: 'Loại ảnh không hợp lệ' });
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn ảnh' });
   const ext = (path.extname(req.file.originalname) || '.png').toLowerCase();
-  if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return res.status(400).json({ error: 'Chỉ nhận ảnh PNG, JPG, GIF, WEBP' });
-  const filename = `event${ev.id}-${type}${ext}`;
-  const s = getEmailSettings(ev.id);
-  // Xoá ảnh cũ nếu khác tên
-  const old = type === 'header' ? s.header_image : s.footer_image;
-  if (old && old !== filename && fs.existsSync(path.join(UPLOAD_DIR, old))) fs.unlinkSync(path.join(UPLOAD_DIR, old));
-  fs.writeFileSync(path.join(UPLOAD_DIR, filename), req.file.buffer);
-  db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = ? WHERE event_id = ?`).run(filename, ev.id);
-  res.json({ ok: true, filename });
+  if (!MIME_BY_EXT[ext]) return res.status(400).json({ error: 'Chỉ nhận ảnh PNG, JPG, GIF, WEBP' });
+  getEmailSettings(ev.id);
+  db.prepare('INSERT INTO email_images (event_id, kind, mime, data) VALUES (?,?,?,?) ON CONFLICT(event_id, kind) DO UPDATE SET mime=excluded.mime, data=excluded.data')
+    .run(ev.id, type, MIME_BY_EXT[ext], req.file.buffer);
+  // Cột này dùng làm "cờ" báo có ảnh + lưu mime (giao diện cũ vẫn hoạt động)
+  db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = ? WHERE event_id = ?`).run(MIME_BY_EXT[ext], ev.id);
+  res.json({ ok: true });
 });
 
 // Xoá ảnh header/footer
@@ -721,11 +720,17 @@ router.delete('/events/:id/email-image/:type', requireLogin, (req, res) => {
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const type = req.params.type;
   if (!['header', 'footer'].includes(type)) return res.status(400).json({ error: 'Loại ảnh không hợp lệ' });
-  const s = getEmailSettings(ev.id);
-  const old = type === 'header' ? s.header_image : s.footer_image;
-  if (old && fs.existsSync(path.join(UPLOAD_DIR, old))) fs.unlinkSync(path.join(UPLOAD_DIR, old));
+  getEmailSettings(ev.id);
+  db.prepare('DELETE FROM email_images WHERE event_id = ? AND kind = ?').run(ev.id, type);
   db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = '' WHERE event_id = ?`).run(ev.id);
   res.json({ ok: true });
+});
+
+// Phục vụ ảnh header/footer từ database (công khai - để email gửi qua Brevo lấy được ảnh)
+router.get('/events/:id/email-image/:type.img', (req, res) => {
+  const row = db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(req.params.id, req.params.type);
+  if (!row) return res.status(404).end();
+  res.type(row.mime).set('Cache-Control', 'no-cache').send(row.data);
 });
 
 // Xem trước email trên trình duyệt (dữ liệu mẫu hoặc người đầu tiên trong danh sách)

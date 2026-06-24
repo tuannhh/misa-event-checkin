@@ -1,0 +1,6 @@
+# Cấu hình Litestream: sao lưu file database xuống bucket Cloud Storage
+# Biến môi trường REPLICA_URL được đặt khi deploy (vd: gcs://ten-bucket/checkin.db)
+dbs:
+  - path: /data/checkin.db
+    replicas:
+      - url: ${REPLICA_URL}

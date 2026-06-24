@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS booth_visits (
   UNIQUE(booth_id, attendee_id)
 );
 
+CREATE TABLE IF NOT EXISTS email_images (
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  data BLOB NOT NULL,
+  PRIMARY KEY (event_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS smtp_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   host TEXT DEFAULT 'smtp.gmail.com',

@@ -723,7 +723,7 @@ async function tabEmail(box, ev) {
     return `
     <div style="border:1px dashed var(--border);border-radius:10px;padding:12px;margin-top:12px">
       <b>${label}</b>
-      ${image ? `<div style="margin:8px 0"><img src="/uploads/${esc(image)}?t=${Math.floor(performance.now())}" style="max-width:100%;max-height:120px;border-radius:6px"></div>
+      ${image ? `<div style="margin:8px 0"><img src="/api/events/${ev.id}/email-image/${type}.img?t=${Math.floor(performance.now())}" style="max-width:100%;max-height:120px;border-radius:6px"></div>
         <label>Độ rộng ảnh: <span id="${type}-width-val">${width}</span>% (so với khung email)</label>
         <input type="range" min="10" max="100" value="${width}" id="em-${type}-width">
         <button class="btn small danger" data-delimg="${type}" style="margin-top:6px">Xoá ảnh</button>`

@@ -101,17 +101,22 @@ function buildEmail(type, attendee, event, settings, mode) {
     else body += qrImg; // không đặt vị trí thì QR nằm cuối
   }
 
-  // Ảnh header / footer
-  let headerHtml = '', footerHtml = '';
-  const imgSrc = (filename, cidName) => mode === 'cid' ? `cid:${cidName}` : (mode === 'remote' ? `${BASE_URL}/uploads/${filename}` : `/uploads/${filename}`);
-  if (settings.header_image && fs.existsSync(path.join(UPLOAD_DIR, settings.header_image))) {
-    headerHtml = `<div style="text-align:center"><img src="${imgSrc(settings.header_image, 'headerimg')}" alt="" style="width:${settings.header_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
-    if (mode === 'cid') attachments.push({ filename: settings.header_image, path: path.join(UPLOAD_DIR, settings.header_image), cid: 'headerimg' });
+  // Ảnh header / footer (lưu trong database, bảng email_images)
+  function imgBlock(kind, cidName, width) {
+    const row = db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(event.id, kind);
+    if (!row) return '';
+    let src;
+    if (mode === 'cid') {
+      attachments.push({ filename: kind + '.' + (row.mime.split('/')[1] || 'png'), content: row.data, cid: cidName });
+      src = 'cid:' + cidName;
+    } else {
+      const base = mode === 'remote' ? BASE_URL : '';
+      src = `${base}/api/events/${event.id}/email-image/${kind}.img`;
+    }
+    return `<div style="text-align:center"><img src="${src}" alt="" style="width:${width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
   }
-  if (settings.footer_image && fs.existsSync(path.join(UPLOAD_DIR, settings.footer_image))) {
-    footerHtml = `<div style="text-align:center"><img src="${imgSrc(settings.footer_image, 'footerimg')}" alt="" style="width:${settings.footer_width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
-    if (mode === 'cid') attachments.push({ filename: settings.footer_image, path: path.join(UPLOAD_DIR, settings.footer_image), cid: 'footerimg' });
-  }
+  const headerHtml = imgBlock('header', 'headerimg', settings.header_width);
+  const footerHtml = imgBlock('footer', 'footerimg', settings.footer_width);
 
   const html = `
   <div style="background:#f3f4f6;padding:16px 0">

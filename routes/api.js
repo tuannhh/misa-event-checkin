@@ -562,6 +562,25 @@ router.post('/attendees/:id/send-email', requireLogin, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Gửi email cho DANH SÁCH người được chọn (tick nhiều người trong giao diện)
+router.post('/events/:id/send-emails', requireLogin, async (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  if (!getTransport()) return res.status(400).json({ error: 'Chưa cấu hình gửi email (vào mục Cấu hình Email)' });
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Chưa chọn người nào' });
+  const settings = getEmailSettings(ev.id);
+  let sent = 0, skipped = 0; const errors = [];
+  for (const id of ids) {
+    const a = db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(id, ev.id);
+    if (!a || !a.email) { skipped++; continue; }
+    if (!isEligible(a, ev)) { skipped++; continue; } // bỏ qua người không đủ điều kiện
+    try { await sendConfirmEmail(a, ev, settings); sent++; }
+    catch (e) { errors.push(`${a.email}: ${e.message}`); }
+  }
+  res.json({ sent, skipped, errors });
+});
+
 // Gửi email xác nhận cho TẤT CẢ người chưa được gửi
 router.post('/events/:id/send-all-emails', requireLogin, async (req, res) => {
   const ev = getEventOr404(req, res); if (!ev) return;
@@ -615,12 +634,18 @@ router.post('/events/:id/scan', requireLogin, (req, res) => {
   if (boothId) {
     const booth = db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id);
     if (!booth) return res.status(400).json({ error: 'Booth không tồn tại trong sự kiện này' });
+    // Khách được quét ở booth nghĩa là đã có mặt tại sự kiện -> ghi nhận check-in nếu chưa có
+    let justCheckedIn = false;
+    if (!a.checked_in_at) {
+      db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+      justCheckedIn = true;
+    }
     const existed = db.prepare('SELECT * FROM booth_visits WHERE booth_id = ? AND attendee_id = ?').get(booth.id, a.id);
     if (existed) {
       return res.json({ status: 'booth_already', message: `${a.name} đã ghé booth "${booth.name}" lúc ${fmtVN(existed.visited_at)}`, attendee: a, booth: booth.name });
     }
     db.prepare('INSERT INTO booth_visits (event_id, booth_id, attendee_id, visited_by) VALUES (?,?,?,?)').run(ev.id, booth.id, a.id, req.user.id);
-    return res.json({ status: 'booth_recorded', message: `Đã ghi nhận ghé booth "${booth.name}"`, attendee: a, booth: booth.name, gate_checked_in: !!a.checked_in_at });
+    return res.json({ status: 'booth_recorded', message: `Đã ghi nhận ghé booth "${booth.name}"`, attendee: a, booth: booth.name, just_checked_in: justCheckedIn });
   }
 
   // ----- Quét tại CỔNG CHECK-IN -----

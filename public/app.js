@@ -380,10 +380,17 @@ async function tabBooths(box, ev) {
 
 // ----- Tab: Người tham dự -----
 async function tabAttendees(box, ev) {
-  const rows = await api(`/events/${ev.id}/attendees`);
+  const allRows = await api(`/events/${ev.id}/attendees`);
   const isCheckinStaff = USER.role === 'checkin';
-  const unsent = rows.filter(r => !r.confirm_email_sent_at && r.email && r.eligible).length;
-  const ineligible = rows.filter(r => !r.eligible).length;
+  const unsent = allRows.filter(r => !r.confirm_email_sent_at && r.email && r.eligible).length;
+  const ineligible = allRows.filter(r => !r.eligible).length;
+  const selected = new Set(); // id những người được tick chọn
+
+  const impBadge = (imp) => {
+    const cls = { 'VIP': 'orange', 'VVIP': 'red', 'Speaker': 'blue', 'Ban lãnh đạo': 'red', 'Ban Tổ chức': 'blue' }[imp] || 'gray';
+    return `<span class="badge ${cls}">${esc(imp || 'Bình thường')}</span>`;
+  };
+
   box.innerHTML = `
   ${ev.can_manage ? `<div class="toolbar">
     <button class="btn" id="btn-add-att">+ Thêm người</button>
@@ -392,57 +399,123 @@ async function tabAttendees(box, ev) {
     <input type="file" id="file-att" accept=".xlsx,.xls" style="display:none">
     <button class="btn green" id="btn-send-all" ${unsent ? '' : 'disabled'}>✉️ Gửi email QR cho người chưa nhận (${unsent})</button>
   </div>` : ''}
-  <div class="muted" style="margin-bottom:10px">${isCheckinStaff ? 'Danh sách khách ĐÃ check-in tại sự kiện này.' :
-    `Tổng: <b>${rows.length}</b> người đăng ký${ineligible ? ` · <span style="color:var(--red)"><b>${ineligible}</b> người không đủ điều kiện (không được gửi email)</span>` : ''} · Nút gửi email chỉ gửi cho người <b>chưa nhận</b>, không gửi trùng.`}</div>
+  <div class="toolbar">
+    <input id="at-search" placeholder="🔍 Tìm theo tên, công ty, SĐT, email...">
+    <select id="at-imp"><option value="">Tất cả mức độ</option>${OPTIONS.importances.map(i => `<option>${i}</option>`).join('')}</select>
+    <select id="at-pos"><option value="">Tất cả chức vụ</option>${OPTIONS.positions.map(p => `<option>${p}</option>`).join('')}</select>
+    <select id="at-size"><option value="">Tất cả quy mô</option>${OPTIONS.company_sizes.map(s => `<option>${s}</option>`).join('')}</select>
+    <select id="at-status"><option value="">Tất cả trạng thái</option><option value="in">Đã check-in</option><option value="out">Chưa check-in</option></select>
+  </div>
+  ${ev.can_manage ? `<div id="at-bulk" style="display:none;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;margin-bottom:12px">
+    <span>Đã chọn <b id="at-selcount">0</b> người</span>
+    <button class="btn green small" id="at-bulk-send">✉️ Gửi email cho người đã chọn</button>
+    <button class="btn secondary small" id="at-bulk-clear">Bỏ chọn</button>
+  </div>` : ''}
+  <div class="muted" id="at-count" style="margin-bottom:10px"></div>
   <div class="table-wrap"><table><thead><tr>
+    ${ev.can_manage ? '<th style="width:34px"><input type="checkbox" id="at-all" style="width:auto" title="Chọn tất cả đang hiển thị"></th>' : ''}
     <th>Họ và tên</th><th>Mức độ</th><th>Email</th><th>SĐT</th><th>Chức vụ</th><th>Công ty</th><th>Quy mô</th><th>Check-in</th><th>Email xác nhận</th><th></th>
   </tr></thead><tbody id="att-body"></tbody></table></div>`;
 
-  const impBadge = (imp) => {
-    const cls = { 'VIP': 'orange', 'VVIP': 'red', 'Speaker': 'blue', 'Ban lãnh đạo': 'red', 'Ban Tổ chức': 'blue' }[imp] || 'gray';
-    return `<span class="badge ${cls}">${esc(imp || 'Bình thường')}</span>`;
-  };
+  const colspan = ev.can_manage ? 11 : 10;
   const body = document.getElementById('att-body');
-  if (!rows.length) body.innerHTML = `<tr><td colspan="10" class="muted">Chưa có ai trong danh sách.</td></tr>`;
-  for (const r of rows) {
-    const tr = el(`<tr ${r.eligible ? '' : 'style="background:#fef2f2"'}>
-      <td><b>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}
-        ${r.eligible ? '' : ' <span class="badge red">Không đủ ĐK</span>'}</td>
+
+  function filtered() {
+    const q = document.getElementById('at-search').value.trim().toLowerCase();
+    const imp = document.getElementById('at-imp').value;
+    const pos = document.getElementById('at-pos').value;
+    const size = document.getElementById('at-size').value;
+    const st = document.getElementById('at-status').value;
+    return allRows.filter(r =>
+      (!q || (r.name + ' ' + r.company + ' ' + r.phone + ' ' + r.email).toLowerCase().includes(q)) &&
+      (!imp || r.importance === imp) && (!pos || r.position === pos) && (!size || r.company_size === size) &&
+      (!st || (st === 'in' ? r.checked_in_at : !r.checked_in_at)));
+  }
+
+  function updateBulkBar() {
+    if (!ev.can_manage) return;
+    const bar = document.getElementById('at-bulk');
+    document.getElementById('at-selcount').textContent = selected.size;
+    bar.style.display = selected.size ? 'flex' : 'none';
+  }
+
+  function renderRows() {
+    const rows = filtered();
+    document.getElementById('at-count').innerHTML =
+      `Hiển thị <b>${rows.length}</b> / tổng <b>${allRows.length}</b> người${ineligible ? ` · <span style="color:var(--red)"><b>${ineligible}</b> người không đủ điều kiện</span>` : ''}`;
+    if (!rows.length) { body.innerHTML = `<tr><td colspan="${colspan}" class="muted">Không có ai phù hợp.</td></tr>`; updateBulkBar(); return; }
+    body.innerHTML = rows.map(r => `<tr ${r.eligible ? '' : 'style="background:#fef2f2"'}>
+      ${ev.can_manage ? `<td><input type="checkbox" class="at-cb" value="${r.id}" style="width:auto" ${selected.has(r.id) ? 'checked' : ''} ${r.email && r.eligible ? '' : 'disabled title="Không có email hoặc không đủ điều kiện"'}></td>` : ''}
+      <td><b>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}${r.eligible ? '' : ' <span class="badge red">Không đủ ĐK</span>'}</td>
       <td>${impBadge(r.importance)}</td>
       <td>${esc(r.email)}</td><td>${esc(r.phone)}</td><td>${esc(r.position)}</td><td>${esc(r.company)}</td>
       <td>${esc(r.company_size)}</td>
       <td>${r.checked_in_at ? `<span class="badge green">✓ ${fmtDate(r.checked_in_at, true)}</span>` : '<span class="badge gray">Chưa</span>'}</td>
       <td style="white-space:nowrap">${r.confirm_email_sent_at ? '<span class="badge green">Đã gửi</span>' : '<span class="badge gray">Chưa gửi</span>'}
         ${ev.can_manage && r.email ? `<button class="btn small ${r.confirm_email_sent_at ? 'secondary' : 'green'}" data-mail="${r.id}" ${r.eligible ? '' : 'disabled title="Không đủ điều kiện tham dự"'}>${r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi email'}</button>` : ''}</td>
-      <td style="white-space:nowrap">
-        ${ev.can_manage ? `
+      <td style="white-space:nowrap">${ev.can_manage ? `
         <button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button>
         <button class="btn small secondary" data-qr="${r.id}" title="Xem mã QR">QR</button>
         <button class="btn small danger" data-del="${r.id}" title="Xoá">✕</button>` : ''}</td>
-    </tr>`);
-    body.appendChild(tr);
-  }
-  body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => attendeeFormModal(ev, () => tabAttendees(box, ev), rows.find(x => x.id == b.dataset.edit)));
+    </tr>`).join('');
 
-  body.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => {
-    const r = rows.find(x => x.id == b.dataset.qr);
-    openModal(`<h3>Mã QR của ${esc(r.name)}</h3>
-      <div style="text-align:center"><img src="/api/attendees/${r.id}/qr.png" style="width:240px"><br>
-      <code>${esc(r.qr_token)}</code></div>
-      <div class="modal-actions"><button class="btn" onclick="closeModal()">Đóng</button></div>`);
-  });
-  body.querySelectorAll('[data-mail]').forEach(b => b.onclick = async () => {
-    b.disabled = true;
-    try { await api(`/attendees/${b.dataset.mail}/send-email`, { method: 'POST' }); toast('Đã gửi email kèm mã QR'); tabAttendees(box, ev); }
-    catch (e) { toast('Lỗi: ' + e.message); b.disabled = false; }
-  });
-  body.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
-    if (!confirm('Xoá người này khỏi danh sách?')) return;
-    await api('/attendees/' + b.dataset.del, { method: 'DELETE' });
-    tabAttendees(box, ev);
-  });
+    body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => attendeeFormModal(ev, () => tabAttendees(box, ev), allRows.find(x => x.id == b.dataset.edit)));
+    body.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => {
+      const r = allRows.find(x => x.id == b.dataset.qr);
+      openModal(`<h3>Mã QR của ${esc(r.name)}</h3>
+        <div style="text-align:center"><img src="/api/attendees/${r.id}/qr.png" style="width:240px"><br><code>${esc(r.qr_token)}</code></div>
+        <div class="modal-actions"><button class="btn" onclick="closeModal()">Đóng</button></div>`);
+    });
+    body.querySelectorAll('[data-mail]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try { await api(`/attendees/${b.dataset.mail}/send-email`, { method: 'POST' }); toast('Đã gửi email kèm mã QR'); tabAttendees(box, ev); }
+      catch (e) { toast('Lỗi: ' + e.message); b.disabled = false; }
+    });
+    body.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Xoá người này khỏi danh sách?')) return;
+      await api('/attendees/' + b.dataset.del, { method: 'DELETE' });
+      tabAttendees(box, ev);
+    });
+    if (ev.can_manage) {
+      body.querySelectorAll('.at-cb').forEach(cb => cb.onchange = () => {
+        if (cb.checked) selected.add(Number(cb.value)); else selected.delete(Number(cb.value));
+        updateBulkBar();
+        const boxes = [...body.querySelectorAll('.at-cb:not(:disabled)')];
+        document.getElementById('at-all').checked = boxes.length && boxes.every(c => c.checked);
+      });
+    }
+    updateBulkBar();
+    if (ev.can_manage) document.getElementById('at-all').checked = false;
+  }
+
+  ['at-search', 'at-imp', 'at-pos', 'at-size', 'at-status'].forEach(id => document.getElementById(id).oninput = renderRows);
+  renderRows();
 
   if (!ev.can_manage) return;
+
+  document.getElementById('at-all').onchange = (e) => {
+    body.querySelectorAll('.at-cb:not(:disabled)').forEach(cb => {
+      cb.checked = e.target.checked;
+      if (e.target.checked) selected.add(Number(cb.value)); else selected.delete(Number(cb.value));
+    });
+    updateBulkBar();
+  };
+  document.getElementById('at-bulk-clear').onclick = () => { selected.clear(); renderRows(); };
+  document.getElementById('at-bulk-send').onclick = async (e) => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!confirm(`Gửi email QR cho ${ids.length} người đã chọn?`)) return;
+    e.target.disabled = true; e.target.textContent = 'Đang gửi...';
+    try {
+      const r = await api(`/events/${ev.id}/send-emails`, { method: 'POST', body: { ids } });
+      let msg = `Đã gửi ${r.sent} email.`;
+      if (r.skipped) msg += `\nBỏ qua ${r.skipped} người (không email/không đủ điều kiện).`;
+      if (r.errors.length) msg += '\nLỗi:\n' + r.errors.slice(0, 5).join('\n');
+      alert(msg);
+    } catch (err) { alert('Lỗi: ' + err.message); }
+    tabAttendees(box, ev);
+  };
+
   document.getElementById('btn-add-att').onclick = () => attendeeFormModal(ev, () => tabAttendees(box, ev));
   const fileInput = document.getElementById('file-att');
   document.getElementById('btn-import-att').onclick = () => fileInput.click();
@@ -644,7 +717,7 @@ async function tabScan(box, ev) {
     } else if (r.status === 'booth_recorded') {
       resultBox.className = 'scan-result valid';
       resultBox.innerHTML = `<h3 style="color:var(--green);font-size:22px">🧭 ĐÃ GHI NHẬN BOOTH</h3>
-        <p style="margin-bottom:8px">${esc(r.message)}${r.gate_checked_in ? '' : ' <span class="badge orange">Khách chưa check-in cổng</span>'}</p>${infoHtml}`;
+        <p style="margin-bottom:8px">${esc(r.message)}${r.just_checked_in ? ' <span class="badge green">Đồng thời ghi nhận check-in</span>' : ''}</p>${infoHtml}`;
     } else if (r.status === 'booth_already') {
       resultBox.className = 'scan-result warn';
       resultBox.innerHTML = `<h3 style="color:var(--orange)">🔁 Đã ghi nhận trước đó</h3><p style="margin-bottom:8px">${esc(r.message)}</p>${infoHtml}`;

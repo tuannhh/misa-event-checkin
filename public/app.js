@@ -6,6 +6,14 @@ let scanner = null; // máy quét QR đang chạy
 const ROLE_NAMES = {
   super_admin: 'Super Admin', admin: 'Admin', checkin: 'Nhân viên check-in',
 };
+// Loại vị trí của nhân viên trong 1 sự kiện
+const STAFF_TYPE_NAMES = {
+  checkin: 'Quét QR / Check-in', reception: 'Lễ tân in QR', supervisor: 'Giám sát booth',
+};
+// Màn hình mặc định khi nhân viên vào sự kiện, theo loại vị trí
+function defaultStaffTab(staffType) {
+  return staffType === 'supervisor' ? 'monitor' : 'scan';
+}
 
 // ============ Tiện ích ============
 async function api(path, opts = {}) {
@@ -175,10 +183,10 @@ async function pageEvents(main) {
   const events = await api('/events');
   const canCreate = ['super_admin', 'admin'].includes(USER.role);
   const isStaff = USER.role === 'checkin';
-  // Nhân viên check-in: nếu CHỈ có đúng 1 sự kiện tổ chức HÔM NAY -> mở thẳng màn hình quét QR
+  // Nhân viên: nếu CHỈ có đúng 1 sự kiện tổ chức HÔM NAY -> mở thẳng màn hình phù hợp vị trí
   if (isStaff) {
     const todays = events.filter(e => eventDayStatus(e) === 'today');
-    if (todays.length === 1) { location.hash = '#/event/' + todays[0].id + '/scan'; return; }
+    if (todays.length === 1) { location.hash = '#/event/' + todays[0].id + '/' + defaultStaffTab(todays[0].my_staff_type); return; }
   }
   const emptyMsg = isStaff
     ? 'Bạn chưa được gán vào sự kiện nào. Hãy liên hệ quản trị viên để được thêm vào sự kiện (mở sự kiện → tab Nhân viên → tích chọn tên bạn → Lưu).'
@@ -206,7 +214,7 @@ async function pageEvents(main) {
         ${isStaff ? '' : `<span class="badge blue">${ev.total_attendees} đăng ký</span><span class="badge green">${ev.total_checkedin} đã check-in</span>`}
         ${statusBadge}
         ${locked ? '<button class="btn small secondary" disabled>🔒 Khoá</button>'
-          : `<button class="btn small" data-open="${ev.id}">${isStaff ? '📷 Vào quét' : 'Mở'}</button>`}
+          : `<button class="btn small" data-open="${ev.id}">${isStaff ? (ev.my_staff_type === 'supervisor' ? '📝 Vào ghi chú' : ev.my_staff_type === 'reception' ? '🖨 Vào lễ tân' : '📷 Vào quét') : 'Mở'}</button>`}
       </div>
     </div>`));
   }
@@ -295,10 +303,21 @@ async function pageEventDetail(main, id, tab) {
       return;
     }
   }
-  tab = tab || (isCheckinStaff ? 'scan' : 'attendees');
-  const tabs = isCheckinStaff
-    ? [['scan', '📷 Quét QR'], ['attendees', '✅ Đã check-in']]
-    : [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR'], ['booths', '🧭 Booth'], ['email', '✉️ Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên']];
+  const staffType = isCheckinStaff ? (ev.my_position?.staff_type || 'checkin') : null;
+  let tabs;
+  if (staffType === 'supervisor') {
+    tab = tab || 'monitor';
+    tabs = [['monitor', '📝 Ghi chú booth']];
+  } else if (staffType === 'reception') {
+    tab = tab || 'scan';
+    tabs = [['scan', '📷 Quét & Check-in'], ['reception', '🖨 Danh sách & In QR']];
+  } else if (isCheckinStaff) {
+    tab = tab || 'scan';
+    tabs = [['scan', '📷 Quét QR'], ['attendees', '✅ Đã check-in']];
+  } else {
+    tab = tab || 'attendees';
+    tabs = [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR'], ['booths', '🧭 Booth'], ['email', '✉️ Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên']];
+  }
 
   main.innerHTML = `
   <div class="page-head">
@@ -327,6 +346,8 @@ async function pageEventDetail(main, id, tab) {
   const content = document.getElementById('tab-content');
   if (tab === 'attendees') tabAttendees(content, ev);
   else if (tab === 'scan') tabScan(content, ev);
+  else if (tab === 'reception') tabReception(content, ev);
+  else if (tab === 'monitor') tabMonitor(content, ev);
   else if (tab === 'booths') tabBooths(content, ev);
   else if (tab === 'email') tabEmail(content, ev);
   else if (tab === 'report') tabReport(content, ev);
@@ -338,7 +359,8 @@ async function tabBooths(box, ev) {
   ev = await api('/events/' + ev.id);
   // Nhóm nhân viên theo vị trí được gán
   const staffByBooth = {};
-  for (const s of (ev.staff || [])) { const k = s.booth_id || 0; (staffByBooth[k] = staffByBooth[k] || []).push(s.name); }
+  const typeTag = t => t === 'reception' ? ' (Lễ tân in QR)' : t === 'supervisor' ? ' (Giám sát)' : '';
+  for (const s of (ev.staff || [])) { const k = s.booth_id || 0; (staffByBooth[k] = staffByBooth[k] || []).push(s.name + typeTag(s.staff_type)); }
   const gateStaff = staffByBooth[0] || [];
   box.innerHTML = `
   <div class="card" style="max-width:680px">
@@ -593,10 +615,10 @@ function attendeeFormModal(ev, onSaved, attendee = null) {
   };
 }
 
-// In tem QR khổ nhỏ (máy in nhiệt) - chỉ gồm QR + danh xưng + họ tên + nơi công tác
-// Khổ tem mặc định 50×40mm; đổi LABEL_W/LABEL_H nếu dùng khổ khác.
+// In tem QR khổ nhỏ (máy in nhiệt PD304) - chỉ gồm QR + danh xưng + họ tên + nơi công tác
+// Khổ tem mặc định 50×30mm; đổi LABEL_W/LABEL_H nếu dùng khổ khác.
 function printQr(r, evName) {
-  const LABEL_W = '50mm', LABEL_H = '40mm';
+  const LABEL_W = '50mm', LABEL_H = '30mm';
   const fullName = (r.salutation ? r.salutation + ' ' : '') + r.name;
   const w = window.open('', '_blank');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tem QR</title>
@@ -604,11 +626,11 @@ function printQr(r, evName) {
       @page { size: ${LABEL_W} ${LABEL_H}; margin: 0; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: ${LABEL_W}; }
-      .label { width: ${LABEL_W}; height: ${LABEL_H}; padding: 2mm 1.5mm; text-align: center;
+      .label { width: ${LABEL_W}; height: ${LABEL_H}; padding: 1mm 1.5mm; text-align: center;
         display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial, sans-serif; }
-      .label img { width: 23mm; height: 23mm; }
-      .nm { font-size: 11px; font-weight: bold; line-height: 1.15; margin-top: 1mm; }
-      .co { font-size: 9px; color: #222; line-height: 1.1; margin-top: 0.5mm; }
+      .label img { width: 18mm; height: 18mm; }
+      .nm { font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 0.6mm; }
+      .co { font-size: 7.5px; color: #222; line-height: 1.05; margin-top: 0.3mm; }
     </style></head>
     <body>
       <div class="label">
@@ -618,6 +640,122 @@ function printQr(r, evName) {
       </div>
     </body></html>`);
   w.document.close();
+}
+
+// ----- Tab: Lễ tân in QR (xem toàn bộ khách, tra cứu & in tem QR) -----
+async function tabReception(box, ev) {
+  const allRows = await api(`/events/${ev.id}/attendees`); // lễ tân nhận TOÀN BỘ danh sách
+  box.innerHTML = `
+  <div class="hint">🖨 Máy tính này nối với máy in tem. Tìm khách trong danh sách rồi bấm <b>In QR</b> để in đúng mã của khách. Khách chưa đăng ký trước: bấm <b>+ Khách vãng lai</b> để thêm nhanh và in luôn.</div>
+  <div class="toolbar">
+    <input id="rc-search" placeholder="🔍 Tìm theo tên, công ty, SĐT, email..." style="flex:1;min-width:220px">
+    <button class="btn green" id="rc-walkin">+ Khách vãng lai</button>
+  </div>
+  <div class="muted" id="rc-count" style="margin-bottom:10px"></div>
+  <div class="table-wrap"><table><thead><tr>
+    <th>Họ và tên</th><th>Công ty</th><th>Chức vụ</th><th>Check-in</th><th></th>
+  </tr></thead><tbody id="rc-body"></tbody></table></div>`;
+
+  const body = document.getElementById('rc-body');
+  function filtered() {
+    const q = document.getElementById('rc-search').value.trim().toLowerCase();
+    return allRows.filter(r => !q || (r.name + ' ' + r.company + ' ' + r.phone + ' ' + r.email).toLowerCase().includes(q));
+  }
+  function render() {
+    const rows = filtered();
+    document.getElementById('rc-count').innerHTML = `Hiển thị <b>${rows.length}</b> / tổng <b>${allRows.length}</b> khách`;
+    body.innerHTML = rows.length ? rows.map(r => `<tr>
+      <td><b>${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>${r.is_walkin ? ' <span class="badge orange">Vãng lai</span>' : ''}</td>
+      <td>${esc(r.company)}</td><td>${esc(r.position)}</td>
+      <td>${r.checked_in_at ? `<span class="badge green">✓ ${fmtDate(r.checked_in_at, true)}</span>` : '<span class="badge gray">Chưa</span>'}</td>
+      <td style="white-space:nowrap">
+        ${r.checked_in_at ? '' : `<button class="btn small green" data-checkin="${r.id}" title="Xác nhận khách đã đến">Check-in</button>`}
+        <button class="btn small secondary" data-print="${r.id}" title="In tem QR cho khách">🖨 In QR</button>
+      </td></tr>`).join('') : `<tr><td colspan="5" class="muted">Không có khách phù hợp.</td></tr>`;
+    body.querySelectorAll('[data-print]').forEach(b => b.onclick = () => printQr(allRows.find(x => x.id == b.dataset.print), ev.name));
+    body.querySelectorAll('[data-checkin]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try { await api(`/events/${ev.id}/checkin/${b.dataset.checkin}`, { method: 'POST' }); toast('Đã check-in'); tabReception(box, ev); }
+      catch (e) { toast('Lỗi: ' + e.message); b.disabled = false; }
+    });
+  }
+  document.getElementById('rc-search').oninput = render;
+  render();
+
+  document.getElementById('rc-walkin').onclick = () => {
+    openModal(`<h3>Thêm khách vãng lai</h3>
+      <p class="muted">Khách chưa đăng ký trước - sẽ được check-in ngay. Sau khi thêm sẽ tự mở cửa sổ in tem QR.</p>
+      ${attendeeFields('rcwi')}
+      <div class="error-msg" id="rcwi-err"></div>
+      <div class="modal-actions"><button class="btn secondary" onclick="closeModal()">Huỷ</button>
+      <button class="btn green" id="rcwi-save">Thêm & In QR</button></div>`);
+    document.getElementById('rcwi-save').onclick = async () => {
+      try {
+        const fields = readAttendeeFields('rcwi');
+        const r = await api(`/events/${ev.id}/walkin`, { method: 'POST', body: { ...fields, booth_id: null } });
+        closeModal(); toast('Đã thêm khách vãng lai & check-in');
+        printQr({ id: r.id, ...fields }, ev.name); // in luôn tem QR của khách mới
+        tabReception(box, ev);
+      } catch (e) { document.getElementById('rcwi-err').textContent = e.message; }
+    };
+  };
+}
+
+// ----- Tab: Giám sát booth (xem khách đã ghé + ghi chú nhu cầu đặc biệt) -----
+async function tabMonitor(box, ev) {
+  let data;
+  try { data = await api(`/events/${ev.id}/booth-monitor`); }
+  catch (e) { box.innerHTML = `<div class="card muted">${esc(e.message)}</div>`; return; }
+  if (!data.booth) { box.innerHTML = '<div class="card muted">Bạn chưa được gán vào booth nào để giám sát. Hãy liên hệ quản trị viên.</div>'; return; }
+
+  box.innerHTML = `
+  <div class="card" style="background:#eff6ff;border:1px solid #bfdbfe">
+    <b>🧭 Booth phụ trách: ${esc(data.booth.name)}</b>
+    <p class="muted" style="margin:4px 0 0">Danh sách khách đã ghé booth này. Ghi chú nhu cầu/quan tâm đặc biệt của từng khách rồi bấm <b>Lưu</b>. Ghi chú sẽ tổng hợp về Báo cáo chung.</p>
+  </div>
+  <div class="toolbar"><input id="mo-search" placeholder="🔍 Tìm khách theo tên, công ty..." style="flex:1;min-width:220px">
+    <button class="btn secondary" id="mo-refresh">🔄 Tải lại</button></div>
+  <div class="muted" id="mo-count" style="margin-bottom:10px"></div>
+  <div id="mo-list"></div>`;
+
+  const list = document.getElementById('mo-list');
+  function filtered() {
+    const q = document.getElementById('mo-search').value.trim().toLowerCase();
+    return data.rows.filter(r => !q || (r.name + ' ' + (r.company || '') + ' ' + (r.position || '')).toLowerCase().includes(q));
+  }
+  function render() {
+    const rows = filtered();
+    document.getElementById('mo-count').innerHTML = `Có <b>${rows.length}</b> / ${data.rows.length} khách đã ghé booth`;
+    if (!rows.length) { list.innerHTML = '<div class="card muted">Chưa có khách nào ghé booth này (khách xuất hiện sau khi được quét QR tại booth).</div>'; return; }
+    list.innerHTML = rows.map(r => `
+      <div class="card" style="padding:14px" data-card="${r.id}">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+          <b style="font-size:16px">${esc((r.salutation ? r.salutation + ' ' : '') + r.name)}</b>
+          <span class="muted" style="font-size:13px">🕒 ${fmtDate(r.visited_at, true)}</span>
+        </div>
+        <div class="muted" style="margin:2px 0 8px">${esc(r.position) || '—'}${r.company ? ' · ' + esc(r.company) : ''}</div>
+        <textarea class="mo-note" data-id="${r.id}" rows="2" placeholder="Ghi chú nhu cầu / quan tâm đặc biệt của khách..." style="width:100%">${esc(r.note || '')}</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button class="btn small green" data-save="${r.id}">💾 Lưu ghi chú</button>
+          <span class="muted mo-status" data-status="${r.id}"></span>
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.save;
+      const note = list.querySelector(`.mo-note[data-id="${id}"]`).value;
+      const status = list.querySelector(`.mo-status[data-status="${id}"]`);
+      b.disabled = true; status.textContent = 'Đang lưu...';
+      try {
+        await api(`/events/${ev.id}/booth-note`, { method: 'PUT', body: { attendee_id: Number(id), note } });
+        const row = data.rows.find(x => x.id == id); if (row) row.note = note.trim();
+        status.textContent = '✓ Đã lưu'; status.style.color = 'var(--green)';
+      } catch (e) { status.textContent = 'Lỗi: ' + e.message; status.style.color = 'var(--red)'; }
+      b.disabled = false;
+    });
+  }
+  document.getElementById('mo-search').oninput = render;
+  document.getElementById('mo-refresh').onclick = () => tabMonitor(box, ev);
+  render();
 }
 
 // ----- Tab: Quét QR -----
@@ -989,7 +1127,7 @@ async function tabReport(box, ev) {
     <a class="btn green" href="/api/events/${ev.id}/report/export" download>⬇ Xuất Excel</a>
   </div>
   <div class="table-wrap"><table><thead><tr>
-    <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian check-in</th><th>Booth đã ghé (${rp.booths.length})</th><th>NV check-in</th>${ev.can_manage ? '<th></th>' : ''}
+    <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian check-in</th><th>Booth đã ghé (${rp.booths.length})</th><th>📝 Ghi chú giám sát</th><th>NV check-in</th>${ev.can_manage ? '<th></th>' : ''}
   </tr></thead><tbody id="rp-body"></tbody></table></div>`;
 
   function renderRows() {
@@ -1012,9 +1150,12 @@ async function tabReport(box, ev) {
       <td>${r.booth_visits.length
         ? `<b>${r.booth_visits.length}</b> booth: ` + r.booth_visits.map(v => `<span class="badge blue" title="${fmtDate(v.visited_at, true)}">${esc(v.name)}</span>`).join(' ')
         : '<span class="muted">—</span>'}</td>
+      <td>${r.booth_visits.filter(v => v.note).length
+        ? r.booth_visits.filter(v => v.note).map(v => `<div style="margin-bottom:2px"><b>${esc(v.name)}:</b> ${esc(v.note)}</div>`).join('')
+        : '<span class="muted">—</span>'}</td>
       <td>${esc(r.checked_in_by_name || '')}</td>
       ${ev.can_manage ? `<td style="white-space:nowrap"><button class="btn small secondary" data-edit="${r.id}" title="Sửa thông tin">✏️</button>${r.checked_in_at ? `<button class="btn small secondary" data-print="${r.id}" title="In tem QR cho khách">🖨</button>` : ''}</td>` : ''}</tr>`).join('')
-      : `<tr><td colspan="${ev.can_manage ? 9 : 8}" class="muted">Không có dữ liệu phù hợp.</td></tr>`;
+      : `<tr><td colspan="${ev.can_manage ? 10 : 9}" class="muted">Không có dữ liệu phù hợp.</td></tr>`;
     if (ev.can_manage) {
       document.getElementById('rp-body').querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
         attendeeFormModal(ev, () => tabReport(box, ev), rp.rows.find(x => x.id == b.dataset.edit)));
@@ -1031,8 +1172,9 @@ async function tabStaff(box, ev) {
   if (!ev.can_manage) { box.innerHTML = '<div class="card muted">Bạn không có quyền quản lý mục này.</div>'; return; }
   ev = await api('/events/' + ev.id); // tải lại danh sách đã gán mới nhất
   const all = await api(`/events/${ev.id}/available-staff`);
-  const assignedMap = new Map(ev.staff.map(s => [s.id, s.booth_id || '']));
+  const assignedMap = new Map(ev.staff.map(s => [s.id, { booth_id: s.booth_id || '', staff_type: s.staff_type || 'checkin' }]));
   const boothOpts = ev.booths.map(b => `<option value="${b.id}">🧭 Booth: ${esc(b.name)}</option>`).join('');
+  const typeOpts = Object.entries(STAFF_TYPE_NAMES).map(([v, n]) => `<option value="${v}">${n}</option>`).join('');
   box.innerHTML = `
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
@@ -1044,11 +1186,15 @@ async function tabStaff(box, ev) {
         <button class="btn green" id="staff-new">+ Tạo tài khoản nhân viên mới</button>
       </div>
     </div>
-    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên được phép quét QR tại sự kiện này và <b>chọn vị trí họ đứng</b> (Cổng lễ tân hoặc 1 booth). Mỗi nhân viên chỉ đứng <b>1 vị trí</b>; 1 booth có thể có nhiều nhân viên. Khi nhân viên mở màn Quét QR, hệ thống tự khoá đúng vị trí được gán.</p>
-    ${all.length ? `<div class="table-wrap"><table><thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Vị trí đứng quét</th></tr></thead><tbody>` +
+    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>vai trò tại sự kiện</b> và <b>vị trí</b>:
+      <br>• <b>Quét QR / Check-in</b>: quét mã tại Cổng hoặc 1 booth.
+      <br>• <b>Lễ tân in QR</b>: đứng ở Cổng, xem toàn bộ khách để tra cứu & in tem QR (máy tính nối máy in).
+      <br>• <b>Giám sát booth</b>: chỉ xem khách đã ghé <b>1 booth</b> được gán và ghi chú (bắt buộc chọn booth).</p>
+    ${all.length ? `<div class="table-wrap"><table><thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Vai trò tại sự kiện</th><th>Vị trí</th></tr></thead><tbody>` +
       all.map(u => `<tr>
         <td><input type="checkbox" style="width:auto" value="${u.id}" ${assignedMap.has(u.id) ? 'checked' : ''} class="staff-cb"></td>
         <td><b>${esc(u.name)}</b><br><span class="muted">${esc(u.email)}${u.unit ? ' · ' + esc(u.unit) : ''}</span></td>
+        <td><select class="staff-type" data-uid="${u.id}" style="min-width:170px" ${assignedMap.has(u.id) ? '' : 'disabled'}>${typeOpts}</select></td>
         <td><select class="staff-pos" data-uid="${u.id}" style="min-width:200px" ${assignedMap.has(u.id) ? '' : 'disabled'}>
           <option value="">🚪 Cổng check-in (ghi nhận tham dự)</option>${boothOpts}
         </select></td>
@@ -1056,23 +1202,47 @@ async function tabStaff(box, ev) {
       : '<p class="muted">Chưa có tài khoản nhân viên check-in nào.</p>'}
     <button class="btn" id="staff-save" style="margin-top:14px">💾 Lưu danh sách</button>
   </div>`;
-  // Đặt sẵn vị trí đã gán cho từng nhân viên
+  // Đặt sẵn vai trò + vị trí đã gán cho từng nhân viên
+  box.querySelectorAll('.staff-type').forEach(sel => {
+    const a = assignedMap.get(Number(sel.dataset.uid));
+    if (a) sel.value = a.staff_type;
+  });
   box.querySelectorAll('.staff-pos').forEach(sel => {
-    const uid = Number(sel.dataset.uid);
-    if (assignedMap.has(uid)) sel.value = assignedMap.get(uid) || '';
+    const a = assignedMap.get(Number(sel.dataset.uid));
+    if (a) sel.value = a.booth_id || '';
   });
-  // Tích/bỏ tích là bật/tắt ô chọn vị trí
+  // Khi đổi vai trò: Lễ tân -> khoá vị trí ở Cổng; Giám sát -> bắt buộc chọn booth
+  function applyTypeUI(uid) {
+    const type = box.querySelector(`.staff-type[data-uid="${uid}"]`).value;
+    const pos = box.querySelector(`.staff-pos[data-uid="${uid}"]`);
+    const cb = box.querySelector(`.staff-cb[value="${uid}"]`);
+    if (!pos) return;
+    if (!cb.checked) { pos.disabled = true; return; }
+    if (type === 'reception') { pos.value = ''; pos.disabled = true; }
+    else { pos.disabled = false; if (type === 'supervisor' && !pos.value && ev.booths.length) pos.value = ev.booths[0].id; }
+  }
+  box.querySelectorAll('.staff-type').forEach(sel => sel.onchange = () => applyTypeUI(sel.dataset.uid));
+  // Tích/bỏ tích là bật/tắt ô chọn vai trò + vị trí
   box.querySelectorAll('.staff-cb').forEach(cb => cb.onchange = () => {
-    const sel = box.querySelector(`.staff-pos[data-uid="${cb.value}"]`);
-    if (sel) { sel.disabled = !cb.checked; if (!cb.checked) sel.value = ''; }
+    const type = box.querySelector(`.staff-type[data-uid="${cb.value}"]`);
+    if (type) type.disabled = !cb.checked;
+    if (!cb.checked) { const pos = box.querySelector(`.staff-pos[data-uid="${cb.value}"]`); if (pos) { pos.disabled = true; pos.value = ''; } }
+    else applyTypeUI(cb.value);
   });
+  box.querySelectorAll('.staff-cb:checked').forEach(cb => applyTypeUI(cb.value));
   document.getElementById('staff-save').onclick = async () => {
-    const assignments = [...box.querySelectorAll('.staff-cb:checked')].map(cb => {
+    const assignments = [];
+    for (const cb of box.querySelectorAll('.staff-cb:checked')) {
+      const type = box.querySelector(`.staff-type[data-uid="${cb.value}"]`).value;
       const sel = box.querySelector(`.staff-pos[data-uid="${cb.value}"]`);
-      return { user_id: Number(cb.value), booth_id: sel && sel.value ? Number(sel.value) : null };
-    });
+      const booth = sel && sel.value ? Number(sel.value) : null;
+      if (type === 'supervisor' && !booth) {
+        return toast('Giám sát booth phải chọn 1 booth. Hãy tạo booth ở tab Booth trước nếu chưa có.');
+      }
+      assignments.push({ user_id: Number(cb.value), booth_id: booth, staff_type: type });
+    }
     await api(`/events/${ev.id}/staff`, { method: 'PUT', body: { assignments } });
-    toast('Đã lưu danh sách nhân viên check-in');
+    toast('Đã lưu danh sách nhân viên');
   };
   // Import nhân viên từ Excel
   const staffFile = document.getElementById('staff-file');

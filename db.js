@@ -131,6 +131,15 @@ for (const [col, def] of [
 // Nâng cấp CSDL cũ: gán nhân viên check-in vào 1 vị trí cố định (NULL = cổng lễ tân, hoặc 1 booth)
 const esCols = db.prepare("PRAGMA table_info(event_staff)").all().map(c => c.name);
 if (!esCols.includes('booth_id')) db.exec('ALTER TABLE event_staff ADD COLUMN booth_id INTEGER');
+// Nâng cấp CSDL cũ: loại vị trí của nhân viên trong 1 sự kiện
+//   'checkin'    = nhân viên quét QR / check-in (mặc định, giữ nguyên hành vi cũ)
+//   'reception'  = lễ tân in QR (xem toàn bộ danh sách khách, in tem QR, đứng ở cổng)
+//   'supervisor' = giám sát booth (chỉ xem khách đã ghé booth mình phụ trách + ghi chú)
+if (!esCols.includes('staff_type')) db.exec("ALTER TABLE event_staff ADD COLUMN staff_type TEXT DEFAULT 'checkin'");
+
+// Nâng cấp CSDL cũ: ghi chú của giám sát viên cho từng lượt khách ghé booth
+const bvCols = db.prepare("PRAGMA table_info(booth_visits)").all().map(c => c.name);
+if (!bvCols.includes('note')) db.exec("ALTER TABLE booth_visits ADD COLUMN note TEXT DEFAULT ''");
 
 // Bỏ vai trò Moderator: chuyển các tài khoản moderator cũ thành nhân viên check-in
 db.prepare("UPDATE users SET role = 'checkin' WHERE role = 'moderator'").run();

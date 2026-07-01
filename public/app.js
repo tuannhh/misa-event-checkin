@@ -8,11 +8,13 @@ const ROLE_NAMES = {
 };
 // Loại vị trí của nhân viên trong 1 sự kiện
 const STAFF_TYPE_NAMES = {
-  checkin: 'Quét QR / Check-in', reception: 'Lễ tân in QR', supervisor: 'Giám sát booth',
+  checkin: 'Quét QR / Check-in', reception: 'Lễ tân in QR', supervisor: 'Giám sát booth', manager: 'Quản lý (xem số liệu)',
 };
 // Màn hình mặc định khi nhân viên vào sự kiện, theo loại vị trí
 function defaultStaffTab(staffType) {
-  return staffType === 'supervisor' ? 'monitor' : 'scan';
+  if (staffType === 'supervisor') return 'monitor';
+  if (staffType === 'manager') return 'dashboard';
+  return 'scan';
 }
 
 // ============ Tiện ích ============
@@ -200,7 +202,8 @@ async function pageEvents(main) {
   const list = document.getElementById('event-list');
   for (const ev of events) {
     const status = eventDayStatus(ev);
-    const locked = isStaff && status !== 'today';
+    // Quản lý (xem số liệu) không bị khoá theo ngày - xem được số đăng ký trước & sau sự kiện
+    const locked = isStaff && status !== 'today' && ev.my_staff_type !== 'manager';
     const statusBadge = status === 'past' ? '<span class="badge gray">Đã kết thúc</span>'
       : status === 'future' ? '<span class="badge orange">Chưa tới ngày tổ chức</span>'
       : (isStaff ? '<span class="badge green">Đang diễn ra hôm nay</span>' : '');
@@ -214,7 +217,7 @@ async function pageEvents(main) {
         ${isStaff ? '' : `<span class="badge blue">${ev.total_attendees} đăng ký</span><span class="badge green">${ev.total_checkedin} đã check-in</span>`}
         ${statusBadge}
         ${locked ? '<button class="btn small secondary" disabled>🔒 Khoá</button>'
-          : `<button class="btn small" data-open="${ev.id}">${isStaff ? (ev.my_staff_type === 'supervisor' ? '📝 Vào ghi chú' : ev.my_staff_type === 'reception' ? '🖨 Vào lễ tân' : '📷 Vào quét') : 'Mở'}</button>`}
+          : `<button class="btn small" data-open="${ev.id}">${isStaff ? (ev.my_staff_type === 'supervisor' ? '📝 Vào ghi chú' : ev.my_staff_type === 'reception' ? '🖨 Vào lễ tân' : ev.my_staff_type === 'manager' ? '📊 Xem số liệu' : '📷 Vào quét') : 'Mở'}</button>`}
       </div>
     </div>`));
   }
@@ -284,8 +287,9 @@ async function pageEventDetail(main, id, tab) {
   catch (e) { main.innerHTML = `<div class="card">${esc(e.message)} <a href="#/events">← Quay lại</a></div>`; return; }
 
   const isCheckinStaff = USER.role === 'checkin';
-  // Mục 3: nhân viên chỉ vào được sự kiện tổ chức ĐÚNG NGÀY hôm nay
-  if (isCheckinStaff) {
+  const staffType = isCheckinStaff ? (ev.my_position?.staff_type || 'checkin') : null;
+  // Mục 3: nhân viên chỉ vào được sự kiện tổ chức ĐÚNG NGÀY hôm nay (Quản lý xem số liệu được miễn khoá)
+  if (isCheckinStaff && staffType !== 'manager') {
     const st = eventDayStatus(ev);
     if (st !== 'today') {
       main.innerHTML = `
@@ -303,11 +307,13 @@ async function pageEventDetail(main, id, tab) {
       return;
     }
   }
-  const staffType = isCheckinStaff ? (ev.my_position?.staff_type || 'checkin') : null;
   let tabs;
   if (staffType === 'supervisor') {
     tab = tab || 'monitor';
     tabs = [['monitor', '📝 Ghi chú booth']];
+  } else if (staffType === 'manager') {
+    tab = tab || 'dashboard';
+    tabs = [['dashboard', '📊 Số liệu']];
   } else if (staffType === 'reception') {
     tab = tab || 'scan';
     tabs = [['scan', '📷 Quét & Check-in'], ['reception', '🖨 Danh sách & In QR']];
@@ -348,6 +354,7 @@ async function pageEventDetail(main, id, tab) {
   else if (tab === 'scan') tabScan(content, ev);
   else if (tab === 'reception') tabReception(content, ev);
   else if (tab === 'monitor') tabMonitor(content, ev);
+  else if (tab === 'dashboard') tabManager(content, ev);
   else if (tab === 'booths') tabBooths(content, ev);
   else if (tab === 'email') tabEmail(content, ev);
   else if (tab === 'report') tabReport(content, ev);
@@ -359,7 +366,7 @@ async function tabBooths(box, ev) {
   ev = await api('/events/' + ev.id);
   // Nhóm nhân viên theo vị trí được gán
   const staffByBooth = {};
-  const typeTag = t => t === 'reception' ? ' (Lễ tân in QR)' : t === 'supervisor' ? ' (Giám sát)' : '';
+  const typeTag = t => t === 'reception' ? ' (Lễ tân in QR)' : t === 'supervisor' ? ' (Giám sát)' : t === 'manager' ? ' (Quản lý)' : '';
   for (const s of (ev.staff || [])) { const k = s.booth_id || 0; (staffByBooth[k] = staffByBooth[k] || []).push(s.name + typeTag(s.staff_type)); }
   const gateStaff = staffByBooth[0] || [];
   box.innerHTML = `
@@ -755,6 +762,123 @@ async function tabMonitor(box, ev) {
   }
   document.getElementById('mo-search').oninput = render;
   document.getElementById('mo-refresh').onclick = () => tabMonitor(box, ev);
+  render();
+}
+
+// ----- Tab: Quản lý (bảng số liệu tổng hợp, chỉ xem) -----
+async function tabManager(box, ev) {
+  const st = await api(`/events/${ev.id}/stats`);
+  const data = st.data;
+  const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
+
+  const cbGroup = (dim, label, options) => `
+    <div style="flex:1;min-width:190px;border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+      <div style="font-weight:700;margin-bottom:6px">${label}</div>
+      <div style="max-height:190px;overflow:auto">
+        ${options.map(o => `<label style="display:flex;gap:7px;align-items:center;font-weight:normal;margin:3px 0">
+          <input type="checkbox" class="mg-f" data-dim="${dim}" value="${esc(String(o.value))}" style="width:auto">${esc(o.label)}</label>`).join('')}
+      </div>
+    </div>`;
+
+  box.innerHTML = `
+  <div class="hint">📊 Bảng số liệu tổng hợp (chỉ xem, không có thông tin cá nhân). Tích nhiều điều kiện để lọc — trong 1 nhóm chọn nhiều = "hoặc", giữa các nhóm = "và". VD: Booth <b>AMIS HRM</b> + Mức độ <b>VIP</b> rồi xem "tỷ trọng theo Chức vụ" để biết trong VIP có bao nhiêu CEO.</div>
+  <div class="stats" id="mg-summary"></div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <h3 style="margin:0">🔎 Lọc theo điều kiện</h3>
+      <button class="btn secondary small" id="mg-clear">Xoá lọc</button>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+      ${cbGroup('importance', 'Mức độ', st.importances.map(v => ({ value: v, label: v })))}
+      ${cbGroup('position', 'Chức vụ', st.positions.map(v => ({ value: v, label: v })))}
+      ${cbGroup('company_size', 'Quy mô nhân sự', st.company_sizes.map(v => ({ value: v, label: v })))}
+      ${st.booths.length ? cbGroup('booth', 'Đã ghé booth', st.booths.map(b => ({ value: b.id, label: b.name }))) : ''}
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 6px">📈 Kết quả theo điều kiện đang lọc</h3>
+    <div class="stats" id="mg-filtered"></div>
+  </div>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">📋 Tỷ trọng theo</h3>
+      <select id="mg-dim" style="min-width:180px">
+        <option value="importance">Mức độ</option>
+        <option value="position">Chức vụ</option>
+        <option value="company_size">Quy mô nhân sự</option>
+        ${st.booths.length ? '<option value="booth">Từng booth</option>' : ''}
+      </select>
+      <span class="muted">(áp dụng cùng bộ lọc bên trên)</span>
+    </div>
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr>
+      <th>Giá trị</th><th>Đăng ký</th><th>Đã đến</th><th>Tỷ lệ đến</th>
+    </tr></thead><tbody id="mg-breakdown"></tbody></table></div>
+  </div>`;
+
+  function readFilters() {
+    const f = { importance: new Set(), position: new Set(), company_size: new Set(), booth: new Set() };
+    box.querySelectorAll('.mg-f:checked').forEach(cb => {
+      const dim = cb.dataset.dim;
+      f[dim].add(dim === 'booth' ? Number(cb.value) : cb.value);
+    });
+    return f;
+  }
+  function matches(d, f) {
+    if (f.importance.size && !f.importance.has(d.importance)) return false;
+    if (f.position.size && !f.position.has(d.position)) return false;
+    if (f.company_size.size && !f.company_size.has(d.company_size)) return false;
+    if (f.booth.size && !d.booths.some(id => f.booth.has(id))) return false;
+    return true;
+  }
+  const statCard = (cls, num, lbl) => `<div class="stat ${cls}"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`;
+
+  function render() {
+    const f = readFilters();
+    const filtered = data.filter(d => matches(d, f));
+    const regAll = data.length, attAll = data.filter(d => d.checked_in).length;
+    const reg = filtered.length, att = filtered.filter(d => d.checked_in).length;
+    const walk = filtered.filter(d => d.is_walkin).length;
+    const anyFilter = f.importance.size || f.position.size || f.company_size.size || f.booth.size;
+
+    document.getElementById('mg-summary').innerHTML =
+      statCard('', regAll, 'Tổng đăng ký') +
+      statCard('green', attAll, 'Đã đến (check-in)') +
+      statCard('', regAll - attAll, 'Chưa đến') +
+      statCard('green', pct(attAll, regAll) + '%', 'Tỷ lệ tham dự');
+
+    document.getElementById('mg-filtered').innerHTML = anyFilter
+      ? statCard('', reg, `Đăng ký khớp lọc (${pct(reg, regAll)}% tổng ĐK)`) +
+        statCard('green', att, `Đã đến khớp lọc (${pct(att, attAll)}% tổng đến)`) +
+        statCard('orange', walk, 'Trong đó vãng lai') +
+        statCard('green', pct(att, reg) + '%', 'Tỷ lệ đến của nhóm')
+      : `<div class="muted" style="padding:6px 2px">Chưa chọn điều kiện nào — đang tính trên toàn bộ. Tích điều kiện ở khung trên để lọc.</div>`;
+
+    // Tỷ trọng theo chiều được chọn (tôn trọng bộ lọc hiện tại)
+    const dim = document.getElementById('mg-dim').value;
+    let groups;
+    if (dim === 'booth') {
+      groups = st.booths.map(b => ({ label: b.name, test: d => d.booths.includes(b.id) }));
+    } else {
+      const opts = dim === 'position' ? st.positions : dim === 'company_size' ? st.company_sizes : st.importances;
+      groups = opts.map(o => ({ label: o, test: d => d[dim] === o }));
+      groups.push({ label: '(Chưa nhập)', test: d => !d[dim] });
+    }
+    const rows = groups.map(g => {
+      const sub = filtered.filter(g.test);
+      return { label: g.label, reg: sub.length, att: sub.filter(d => d.checked_in).length };
+    }).filter(r => r.reg > 0);
+    document.getElementById('mg-breakdown').innerHTML = rows.length
+      ? rows.map(r => `<tr>
+          <td><b>${esc(r.label)}</b></td>
+          <td>${r.reg} <span class="muted">(${pct(r.reg, reg)}%)</span></td>
+          <td>${r.att} <span class="muted">(${pct(r.att, att)}%)</span></td>
+          <td>${pct(r.att, r.reg)}%</td></tr>`).join('')
+      : '<tr><td colspan="4" class="muted">Không có dữ liệu phù hợp bộ lọc.</td></tr>';
+  }
+
+  box.querySelectorAll('.mg-f').forEach(cb => cb.onchange = render);
+  document.getElementById('mg-dim').onchange = render;
+  document.getElementById('mg-clear').onclick = () => { box.querySelectorAll('.mg-f:checked').forEach(cb => cb.checked = false); render(); };
   render();
 }
 
@@ -1189,7 +1313,8 @@ async function tabStaff(box, ev) {
     <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>vai trò tại sự kiện</b> và <b>vị trí</b>:
       <br>• <b>Quét QR / Check-in</b>: quét mã tại Cổng hoặc 1 booth.
       <br>• <b>Lễ tân in QR</b>: đứng ở Cổng, xem toàn bộ khách để tra cứu & in tem QR (máy tính nối máy in).
-      <br>• <b>Giám sát booth</b>: chỉ xem khách đã ghé <b>1 booth</b> được gán và ghi chú (bắt buộc chọn booth).</p>
+      <br>• <b>Giám sát booth</b>: chỉ xem khách đã ghé <b>1 booth</b> được gán và ghi chú (bắt buộc chọn booth).
+      <br>• <b>Quản lý (xem số liệu)</b>: chỉ xem bảng số liệu tổng hợp toàn sự kiện (đăng ký/đến dự, lọc theo chức vụ/quy mô/mức độ/booth). Không quét, không xem thông tin cá nhân.</p>
     ${all.length ? `<div class="table-wrap"><table><thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Vai trò tại sự kiện</th><th>Vị trí</th></tr></thead><tbody>` +
       all.map(u => `<tr>
         <td><input type="checkbox" style="width:auto" value="${u.id}" ${assignedMap.has(u.id) ? 'checked' : ''} class="staff-cb"></td>
@@ -1218,7 +1343,7 @@ async function tabStaff(box, ev) {
     const cb = box.querySelector(`.staff-cb[value="${uid}"]`);
     if (!pos) return;
     if (!cb.checked) { pos.disabled = true; return; }
-    if (type === 'reception') { pos.value = ''; pos.disabled = true; }
+    if (type === 'reception' || type === 'manager') { pos.value = ''; pos.disabled = true; } // lễ tân=cổng; quản lý xem toàn sự kiện
     else { pos.disabled = false; if (type === 'supervisor' && !pos.value && ev.booths.length) pos.value = ev.booths[0].id; }
   }
   box.querySelectorAll('.staff-type').forEach(sel => sel.onchange = () => applyTypeUI(sel.dataset.uid));

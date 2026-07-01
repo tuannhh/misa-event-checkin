@@ -88,7 +88,9 @@ function getEmailSettings(eventId) {
   db.prepare('INSERT OR IGNORE INTO email_settings (event_id) VALUES (?)').run(eventId);
   return db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(eventId);
 }
-const STAFF_TYPES = ['checkin', 'reception', 'supervisor'];
+const STAFF_TYPES = ['checkin', 'reception', 'supervisor', 'manager'];
+// Vị trí chỉ được XEM (không quét/check-in/thêm khách)
+const VIEW_ONLY_TYPES = ['supervisor', 'manager'];
 // Lấy phân công của 1 nhân viên trong 1 sự kiện: { booth_id, staff_type } (hoặc null nếu chưa gán)
 function getAssignment(user, eventId) {
   const row = db.prepare('SELECT booth_id, staff_type FROM event_staff WHERE event_id = ? AND user_id = ?').get(eventId, user.id);
@@ -329,7 +331,7 @@ router.put('/events/:id/staff', requireLogin, (req, res) => {
   for (const a of assignments) {
     const type = STAFF_TYPES.includes(a.staff_type) ? a.staff_type : 'checkin';
     let bid = a.booth_id && validBooths.has(Number(a.booth_id)) ? Number(a.booth_id) : null;
-    if (type === 'reception') bid = null;   // lễ tân in QR luôn đứng ở cổng
+    if (type === 'reception' || type === 'manager') bid = null;   // lễ tân đứng ở cổng; quản lý xem toàn sự kiện (không gán booth)
     ins.run(ev.id, a.user_id, bid, type);
   }
   res.json({ ok: true });
@@ -422,8 +424,8 @@ router.get('/events/:id/attendees', requireLogin, (req, res) => {
     const type = asg ? asg.staff_type : 'checkin';
     if (type === 'reception') {
       // Lễ tân in QR: xem TOÀN BỘ khách (đã đăng ký trước + vãng lai) để tra cứu & in tem QR
-    } else if (type === 'supervisor') {
-      rows = []; // Giám sát viên dùng màn hình riêng (booth-monitor), không xem danh sách này
+    } else if (type === 'supervisor' || type === 'manager') {
+      rows = []; // Giám sát / Quản lý dùng màn hình riêng, không xem danh sách này
     } else if (req.query.all !== '1') {
       // Nhân viên check-in chỉ xem danh sách người ĐÃ check-in
       rows = rows.filter(r => r.checked_in_at);
@@ -629,10 +631,10 @@ router.post('/events/:id/scan', requireLogin, (req, res) => {
   if (req.user.role === 'checkin' && !isEventToday(ev)) {
     return res.status(403).json({ error: 'Chỉ được quét vào đúng ngày tổ chức sự kiện' });
   }
-  // Giám sát viên không có quyền quét mã (chặn sớm, trước cả khi tra mã)
+  // Vị trí chỉ-xem (Giám sát / Quản lý) không có quyền quét mã (chặn sớm, trước cả khi tra mã)
   if (req.user.role === 'checkin') {
     const mine = getAssignment(req.user, ev.id);
-    if (mine && mine.staff_type === 'supervisor') return res.status(403).json({ error: 'Giám sát viên không có quyền quét mã / check-in' });
+    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
   }
   const token = String(req.body.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
@@ -656,7 +658,7 @@ router.post('/events/:id/scan', requireLogin, (req, res) => {
   if (req.user.role === 'checkin') {
     const mine = getAssignment(req.user, ev.id);
     if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
-    if (mine.staff_type === 'supervisor') return res.status(403).json({ error: 'Giám sát viên không có quyền quét mã / check-in' });
+    if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
     boothId = mine.booth_id || null; // luôn dùng vị trí được gán (lễ tân = cổng)
   }
 
@@ -699,7 +701,7 @@ router.post('/events/:id/checkin/:attendeeId', requireLogin, (req, res) => {
   const ev = getEventOr404(req, res); if (!ev) return;
   if (req.user.role === 'checkin') {
     const mine = getAssignment(req.user, ev.id);
-    if (mine && mine.staff_type === 'supervisor') return res.status(403).json({ error: 'Giám sát viên không có quyền check-in' });
+    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không check-in' });
   }
   const a = db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(req.params.attendeeId, ev.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy người tham dự' });
@@ -720,7 +722,7 @@ router.post('/events/:id/walkin', requireLogin, (req, res) => {
   if (req.user.role === 'checkin') {
     const mine = getAssignment(req.user, ev.id);
     if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
-    if (mine.staff_type === 'supervisor') return res.status(403).json({ error: 'Giám sát viên không có quyền thêm khách' });
+    if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không thêm khách' });
     boothId = mine.booth_id || null;
   } else if (boothId && !db.prepare('SELECT 1 FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id)) {
     boothId = null;
@@ -886,8 +888,17 @@ function attachBoothVisits(eventId, rows) {
   return rows.map(r => ({ ...r, booth_visits: byAttendee[r.id] || [] }));
 }
 
+// Chặn vị trí chỉ-xem (Giám sát/Quản lý) khỏi báo cáo chi tiết (có thông tin cá nhân)
+function blockViewOnlyReport(req, res, ev) {
+  if (req.user.role !== 'checkin') return false;
+  const mine = getAssignment(req.user, ev.id);
+  if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Bạn không có quyền xem báo cáo chi tiết' }); return true; }
+  return false;
+}
+
 router.get('/events/:id/report', requireLogin, (req, res) => {
   const ev = getEventOr404(req, res); if (!ev) return;
+  if (blockViewOnlyReport(req, res, ev)) return;
   let rows = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
   rows = attachBoothVisits(ev.id, rows).map(r => ({ ...r, eligible: isEligible(r, ev) }));
@@ -903,6 +914,7 @@ router.get('/events/:id/report', requireLogin, (req, res) => {
 
 router.get('/events/:id/report/export', requireLogin, (req, res) => {
   const ev = getEventOr404(req, res); if (!ev) return;
+  if (blockViewOnlyReport(req, res, ev)) return;
   let rows = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
   rows = attachBoothVisits(ev.id, rows);
@@ -927,6 +939,25 @@ router.get('/events/:id/report/export', requireLogin, (req, res) => {
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Disposition', `attachment; filename="bao-cao-su-kien-${ev.id}.xlsx"`);
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
+});
+
+// Số liệu tổng hợp cho vị trí Quản lý (chỉ thuộc tính để đếm, KHÔNG kèm thông tin cá nhân)
+router.get('/events/:id/stats', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  const rows = db.prepare('SELECT id, position, company_size, importance, is_walkin, checked_in_at FROM attendees WHERE event_id = ?').all(ev.id);
+  const visits = db.prepare('SELECT attendee_id, booth_id FROM booth_visits WHERE event_id = ?').all(ev.id);
+  const boothsByAtt = {};
+  for (const v of visits) (boothsByAtt[v.attendee_id] = boothsByAtt[v.attendee_id] || []).push(v.booth_id);
+  const data = rows.map(r => ({
+    checked_in: !!r.checked_in_at,
+    is_walkin: !!r.is_walkin,
+    position: r.position || '',
+    company_size: r.company_size || '',
+    importance: r.importance || 'Bình thường',
+    booths: boothsByAtt[r.id] || [],
+  }));
+  const booths = db.prepare('SELECT id, name FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
+  res.json({ event: { name: ev.name, event_date: ev.event_date }, data, booths, positions: POSITIONS, company_sizes: COMPANY_SIZES, importances: IMPORTANCES });
 });
 
 // Danh sách lựa chọn cho form

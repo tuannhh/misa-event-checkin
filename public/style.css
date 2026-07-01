@@ -107,6 +107,35 @@ code { background: #e0e7ff; padding: 1px 6px; border-radius: 5px; font-size: 12.
 
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 12px 22px; border-radius: 10px; font-size: 14px; z-index: 200; box-shadow: 0 10px 30px rgba(0,0,0,.3); display: none; max-width: 92vw; }
 
+/* ===== Dashboard Quản lý (tối ưu cho điện thoại) ===== */
+.mg-hero { text-align: center; background: linear-gradient(135deg, #eff6ff, #ffffff); padding: 22px 18px; }
+.mg-hero .big { font-size: 46px; font-weight: 800; color: var(--green); line-height: 1; }
+.mg-hero .sub { color: #374151; margin-top: 8px; font-size: 15px; }
+.mg-hero .sub b { color: #111827; }
+.mg-hero .mini { color: var(--gray); font-size: 13px; margin-top: 6px; }
+.mg-bar { height: 12px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin: 14px auto 0; max-width: 460px; }
+.mg-bar > span { display: block; height: 100%; background: var(--green); border-radius: 999px; transition: width .25s; }
+.mg-scope { display: inline-block; background: #dbeafe; color: #1e40af; border-radius: 999px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+
+.mg-acc-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; background: none; border: none; padding: 0; font-size: 16px; font-weight: 700; color: #111827; }
+.mg-acc-toggle .chev { transition: transform .2s; color: var(--gray); }
+.mg-acc-toggle.open .chev { transform: rotate(180deg); }
+.mg-filter-count { background: var(--primary); color: #fff; border-radius: 999px; padding: 1px 9px; font-size: 12px; margin-left: 8px; }
+.mg-acc-body { margin-top: 12px; }
+.mg-acc-body.hide { display: none; }
+.mg-group-title { font-weight: 700; font-size: 13px; margin: 14px 0 6px; color: #374151; }
+.mg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.mg-chip { display: inline-flex; align-items: center; gap: 5px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: #374151; font-size: 13px; font-weight: 600; user-select: none; }
+.mg-chip:hover { border-color: var(--primary); }
+.mg-chip.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+.mg-brow { padding: 10px 2px; border-bottom: 1px solid var(--border); }
+.mg-brow:last-child { border-bottom: none; }
+.mg-brow-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.mg-brow-top b { font-size: 14px; }
+.mg-brow-top .n { color: var(--gray); font-size: 12.5px; white-space: nowrap; }
+.mg-brow .mg-bar { height: 8px; margin-top: 6px; }
+
 /* ===== Giao diện điện thoại (nhân viên check-in) ===== */
 @media (max-width: 640px) {
   .topbar-inner { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }

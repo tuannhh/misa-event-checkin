@@ -771,55 +771,54 @@ async function tabManager(box, ev) {
   const data = st.data;
   const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
 
-  const cbGroup = (dim, label, options) => `
-    <div style="flex:1;min-width:190px;border:1px solid var(--border);border-radius:10px;padding:10px 12px">
-      <div style="font-weight:700;margin-bottom:6px">${label}</div>
-      <div style="max-height:190px;overflow:auto">
-        ${options.map(o => `<label style="display:flex;gap:7px;align-items:center;font-weight:normal;margin:3px 0">
-          <input type="checkbox" class="mg-f" data-dim="${dim}" value="${esc(String(o.value))}" style="width:auto">${esc(o.label)}</label>`).join('')}
-      </div>
+  // Nhóm điều kiện lọc, mỗi giá trị là 1 "chip" bấm để bật/tắt (dễ chạm trên điện thoại)
+  const chipGroup = (dim, label, options) => `
+    <div class="mg-group-title">${label}</div>
+    <div class="mg-chips">
+      ${options.map(o => `<span class="mg-chip" data-dim="${dim}" data-val="${esc(String(o.value))}">${esc(o.label)}</span>`).join('')}
     </div>`;
 
   box.innerHTML = `
-  <div class="hint">📊 Bảng số liệu tổng hợp (chỉ xem, không có thông tin cá nhân). Tích nhiều điều kiện để lọc — trong 1 nhóm chọn nhiều = "hoặc", giữa các nhóm = "và". VD: Booth <b>AMIS HRM</b> + Mức độ <b>VIP</b> rồi xem "tỷ trọng theo Chức vụ" để biết trong VIP có bao nhiêu CEO.</div>
-  <div class="stats" id="mg-summary"></div>
+  <div class="card mg-hero">
+    <div id="mg-scope"></div>
+    <div class="big" id="mg-rate">0%</div>
+    <div class="sub" id="mg-headline"></div>
+    <div class="mg-bar"><span id="mg-progress" style="width:0%"></span></div>
+    <div class="mini" id="mg-mini"></div>
+  </div>
+
   <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <h3 style="margin:0">🔎 Lọc theo điều kiện</h3>
-      <button class="btn secondary small" id="mg-clear">Xoá lọc</button>
-    </div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
-      ${cbGroup('importance', 'Mức độ', st.importances.map(v => ({ value: v, label: v })))}
-      ${cbGroup('position', 'Chức vụ', st.positions.map(v => ({ value: v, label: v })))}
-      ${cbGroup('company_size', 'Quy mô nhân sự', st.company_sizes.map(v => ({ value: v, label: v })))}
-      ${st.booths.length ? cbGroup('booth', 'Đã ghé booth', st.booths.map(b => ({ value: b.id, label: b.name }))) : ''}
+    <button class="mg-acc-toggle" id="mg-acc-toggle">
+      <span>🔎 Bộ lọc<span class="mg-filter-count" id="mg-fcount" style="display:none">0</span></span>
+      <span class="chev">▾</span>
+    </button>
+    <div class="mg-acc-body" id="mg-acc-body">
+      ${chipGroup('importance', 'Mức độ', st.importances.map(v => ({ value: v, label: v })))}
+      ${chipGroup('position', 'Chức vụ', st.positions.map(v => ({ value: v, label: v })))}
+      ${chipGroup('company_size', 'Quy mô nhân sự', st.company_sizes.map(v => ({ value: v, label: v })))}
+      ${st.booths.length ? chipGroup('booth', 'Đã ghé booth', st.booths.map(b => ({ value: b.id, label: b.name }))) : ''}
+      <button class="btn secondary small" id="mg-clear" style="margin-top:16px">✕ Xoá tất cả lọc</button>
     </div>
   </div>
+
   <div class="card">
-    <h3 style="margin:0 0 6px">📈 Kết quả theo điều kiện đang lọc</h3>
-    <div class="stats" id="mg-filtered"></div>
-  </div>
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <h3 style="margin:0">📋 Tỷ trọng theo</h3>
-      <select id="mg-dim" style="min-width:180px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      <b style="font-size:15px">📋 Tỷ trọng theo</b>
+      <select id="mg-dim" style="width:auto;min-width:150px;flex:1">
         <option value="importance">Mức độ</option>
         <option value="position">Chức vụ</option>
         <option value="company_size">Quy mô nhân sự</option>
         ${st.booths.length ? '<option value="booth">Từng booth</option>' : ''}
       </select>
-      <span class="muted">(áp dụng cùng bộ lọc bên trên)</span>
     </div>
-    <div class="table-wrap" style="margin-top:10px"><table><thead><tr>
-      <th>Giá trị</th><th>Đăng ký</th><th>Đã đến</th><th>Tỷ lệ đến</th>
-    </tr></thead><tbody id="mg-breakdown"></tbody></table></div>
+    <div id="mg-breakdown"></div>
   </div>`;
 
   function readFilters() {
     const f = { importance: new Set(), position: new Set(), company_size: new Set(), booth: new Set() };
-    box.querySelectorAll('.mg-f:checked').forEach(cb => {
-      const dim = cb.dataset.dim;
-      f[dim].add(dim === 'booth' ? Number(cb.value) : cb.value);
+    box.querySelectorAll('.mg-chip.on').forEach(c => {
+      const dim = c.dataset.dim;
+      f[dim].add(dim === 'booth' ? Number(c.dataset.val) : c.dataset.val);
     });
     return f;
   }
@@ -830,30 +829,38 @@ async function tabManager(box, ev) {
     if (f.booth.size && !d.booths.some(id => f.booth.has(id))) return false;
     return true;
   }
-  const statCard = (cls, num, lbl) => `<div class="stat ${cls}"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`;
+  // Mô tả bộ lọc đang chọn thành chữ ngắn (VD: "VIP · Booth AMIS HRM")
+  function filterSummary(f) {
+    const parts = [];
+    for (const dim of ['importance', 'position', 'company_size']) if (f[dim].size) parts.push([...f[dim]].join(', '));
+    if (f.booth.size) parts.push([...f.booth].map(id => (st.booths.find(b => b.id === id) || {}).name).filter(Boolean).join(', '));
+    return parts.join(' · ');
+  }
 
   function render() {
     const f = readFilters();
-    const filtered = data.filter(d => matches(d, f));
-    const regAll = data.length, attAll = data.filter(d => d.checked_in).length;
-    const reg = filtered.length, att = filtered.filter(d => d.checked_in).length;
-    const walk = filtered.filter(d => d.is_walkin).length;
     const anyFilter = f.importance.size || f.position.size || f.company_size.size || f.booth.size;
+    const regAll = data.length, attAll = data.filter(d => d.checked_in).length;
+    const scope = anyFilter ? data.filter(d => matches(d, f)) : data;
+    const reg = scope.length, att = scope.filter(d => d.checked_in).length, walk = scope.filter(d => d.is_walkin).length;
 
-    document.getElementById('mg-summary').innerHTML =
-      statCard('', regAll, 'Tổng đăng ký') +
-      statCard('green', attAll, 'Đã đến (check-in)') +
-      statCard('', regAll - attAll, 'Chưa đến') +
-      statCard('green', pct(attAll, regAll) + '%', 'Tỷ lệ tham dự');
+    // Ô chính (hero): tỷ lệ đến của phạm vi đang xem (toàn bộ hoặc theo lọc)
+    document.getElementById('mg-scope').innerHTML = anyFilter
+      ? `<span class="mg-scope">Đang lọc: ${esc(filterSummary(f))}</span>`
+      : `<span class="mg-scope">Toàn sự kiện</span>`;
+    document.getElementById('mg-rate').textContent = pct(att, reg) + '%';
+    document.getElementById('mg-progress').style.width = pct(att, reg) + '%';
+    document.getElementById('mg-headline').innerHTML = `Đã đến <b>${att}</b> / <b>${reg}</b> khách${anyFilter ? ' (khớp lọc)' : ' đăng ký'}`;
+    document.getElementById('mg-mini').textContent = anyFilter
+      ? `Chưa đến: ${reg - att} · Vãng lai: ${walk} · Chiếm ${pct(reg, regAll)}% tổng ĐK, ${pct(att, attAll)}% tổng đã đến`
+      : `Chưa đến: ${reg - att} · Khách vãng lai: ${walk}`;
 
-    document.getElementById('mg-filtered').innerHTML = anyFilter
-      ? statCard('', reg, `Đăng ký khớp lọc (${pct(reg, regAll)}% tổng ĐK)`) +
-        statCard('green', att, `Đã đến khớp lọc (${pct(att, attAll)}% tổng đến)`) +
-        statCard('orange', walk, 'Trong đó vãng lai') +
-        statCard('green', pct(att, reg) + '%', 'Tỷ lệ đến của nhóm')
-      : `<div class="muted" style="padding:6px 2px">Chưa chọn điều kiện nào — đang tính trên toàn bộ. Tích điều kiện ở khung trên để lọc.</div>`;
+    // Số điều kiện đang chọn (hiện trên nút Bộ lọc)
+    const nSel = f.importance.size + f.position.size + f.company_size.size + f.booth.size;
+    const fcount = document.getElementById('mg-fcount');
+    fcount.textContent = nSel; fcount.style.display = nSel ? 'inline-block' : 'none';
 
-    // Tỷ trọng theo chiều được chọn (tôn trọng bộ lọc hiện tại)
+    // Tỷ trọng theo chiều được chọn (tôn trọng bộ lọc) - thanh ngang dễ đọc trên điện thoại
     const dim = document.getElementById('mg-dim').value;
     let groups;
     if (dim === 'booth') {
@@ -864,21 +871,30 @@ async function tabManager(box, ev) {
       groups.push({ label: '(Chưa nhập)', test: d => !d[dim] });
     }
     const rows = groups.map(g => {
-      const sub = filtered.filter(g.test);
+      const sub = scope.filter(g.test);
       return { label: g.label, reg: sub.length, att: sub.filter(d => d.checked_in).length };
-    }).filter(r => r.reg > 0);
+    }).filter(r => r.reg > 0).sort((a, b) => b.reg - a.reg);
     document.getElementById('mg-breakdown').innerHTML = rows.length
-      ? rows.map(r => `<tr>
-          <td><b>${esc(r.label)}</b></td>
-          <td>${r.reg} <span class="muted">(${pct(r.reg, reg)}%)</span></td>
-          <td>${r.att} <span class="muted">(${pct(r.att, att)}%)</span></td>
-          <td>${pct(r.att, r.reg)}%</td></tr>`).join('')
-      : '<tr><td colspan="4" class="muted">Không có dữ liệu phù hợp bộ lọc.</td></tr>';
+      ? rows.map(r => `<div class="mg-brow">
+          <div class="mg-brow-top"><b>${esc(r.label)}</b><span class="n">ĐK <b>${r.reg}</b> · Đến <b>${r.att}</b> (${pct(r.att, r.reg)}%)</span></div>
+          <div class="mg-bar"><span style="width:${pct(r.att, r.reg)}%"></span></div>
+        </div>`).join('')
+      : '<div class="muted" style="padding:8px 2px">Không có dữ liệu phù hợp bộ lọc.</div>';
   }
 
-  box.querySelectorAll('.mg-f').forEach(cb => cb.onchange = render);
+  // Bấm chip để bật/tắt điều kiện
+  box.querySelectorAll('.mg-chip').forEach(c => c.onclick = () => { c.classList.toggle('on'); render(); });
   document.getElementById('mg-dim').onchange = render;
-  document.getElementById('mg-clear').onclick = () => { box.querySelectorAll('.mg-f:checked').forEach(cb => cb.checked = false); render(); };
+  document.getElementById('mg-clear').onclick = () => { box.querySelectorAll('.mg-chip.on').forEach(c => c.classList.remove('on')); render(); };
+
+  // Bộ lọc thu gọn: mặc định MỞ trên máy tính, ĐÓNG trên điện thoại (tiết kiệm màn hình)
+  const accBody = document.getElementById('mg-acc-body');
+  const accToggle = document.getElementById('mg-acc-toggle');
+  let open = window.innerWidth > 640;
+  const applyAcc = () => { accBody.classList.toggle('hide', !open); accToggle.classList.toggle('open', open); };
+  accToggle.onclick = () => { open = !open; applyAcc(); };
+  applyAcc();
+
   render();
 }
 

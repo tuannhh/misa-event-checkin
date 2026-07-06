@@ -2,6 +2,10 @@
 
 Hệ thống quản lý check-in sự kiện bằng QR code của MISA. Chủ dự án là người **không biết code** — luôn giải thích bằng tiếng Việt, đơn giản, làm thay mọi thao tác kỹ thuật.
 
+## ⚠️ Đọc và cập nhật MEMORYBANK.md
+[MEMORYBANK.md](MEMORYBANK.md) là tài liệu bàn giao đầy đủ (schema DB, toàn bộ API, luồng nghiệp vụ, UI, deploy, bẫy kỹ thuật, lịch sử phát triển). File CLAUDE.md này chỉ là bản tóm tắt ngắn.
+**Sau khi hoàn thành bất kỳ tính năng, thay đổi kiến trúc, hoặc quyết định nghiệp vụ quan trọng nào (kể cả chỉ là tư vấn/trao đổi chưa code) — PHẢI cập nhật MEMORYBANK.md tương ứng, không cần hỏi lại chủ dự án.** Xem quy tắc chi tiết ở mục 11 của file đó.
+
 ## Tổng quan kỹ thuật
 - **Stack:** Node.js + Express + better-sqlite3, frontend thuần HTML/JS/CSS (SPA) trong `public/`, không dùng framework.
 - **Chạy local:** `npm start` → http://localhost:3000 (hoặc nháy đúp `KHOI-DONG.bat`). DB tự tạo tại `data/checkin.db`.

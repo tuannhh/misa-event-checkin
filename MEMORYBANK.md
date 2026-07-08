@@ -373,6 +373,42 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 
 ---
 
+## 12. ĐANG THỰC HIỆN: Viết lại Vue 3 + Tailwind + MySQL (nhánh `rewrite-vue-mysql`)
+
+Mục tiêu: đưa app về đúng chuẩn stack MISA. **Giữ backend Node/Express** (tái dùng logic), đổi 2 tầng: giao diện → Vue 3, dữ liệu → MySQL. Làm **song song trên nhánh `rewrite-vue-mysql`**, KHÔNG đụng `main` (bản SQLite + vanilla vẫn chạy Cloud Run).
+
+### Kiến trúc bản mới
+- **Backend:** Node.js + Express (giữ nguyên cấu trúc file gốc), tầng DB = **MySQL** (`mysql2`).
+  - `db.js`: pool mysql2 + wrapper **`db.prepare(sql).get/all/run(...)` BẤT ĐỒNG BỘ** (giữ cú pháp cũ, chỉ thêm `await`). `db.init()` tạo 10 bảng khi khởi động + seed. Biến env: `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME` (mặc định 127.0.0.1:3307 / checkin / checkinpw / checkin).
+  - `server.js`: `await db.init()` trước `listen`; phục vụ `public-vue/` (build Vue) nếu có, else `public/`.
+  - `routes/api.js`, `email.js`: đã async hóa toàn bộ + sửa SQL SQLite→MySQL (`datetime('now')`→`UTC_TIMESTAMP()`, `INSERT OR IGNORE`→`INSERT IGNORE`, `ON CONFLICT..DO UPDATE`→`ON DUPLICATE KEY UPDATE ..VALUES()`, scheduler dùng `DATE_ADD(.. INTERVAL .. MINUTE)`). Cột datetime `DEFAULT (UTC_TIMESTAMP())`; mysql2 `dateStrings:true` để trả chuỗi UTC (frontend `fmtDate(x,true)` thêm 'Z').
+- **Frontend:** thư mục `web/` = Vite + Vue 3 + Tailwind + **bộ component MDS** copy từ skill (`web/src/components/mds/M*.vue` + `toast.js`), tokens ở `web/src/tokens/` (theme blue). Router hash (`web/src/router.js`). API client + auth state ở `web/src/api.js` (session cookie same-origin). Dev: Vite 5173 proxy `/api`,`/uploads`→backend 3000. Build: `outDir ../public-vue`.
+
+### Tiến độ (tính đến lần cập nhật này)
+- ✅ **GĐ0 Backend MySQL** — xong, đã commit `ffd4c53`. Test 14 + 14 kịch bản pass trên MySQL (script ở `/tmp/checkintest/test.mjs`, `test2.mjs`).
+- ✅ **GĐ1 Frontend nền** — xong, đã commit. Gồm: `LoginView`, `App.vue` (shell topbar+nav), `EventsView` (CRUD sự kiện + điều kiện tham dự), `MembersView`, `SmtpView`, `EventDetailView` (khung tabs + placeholder). Verify qua preview: đăng nhập + tạo sự kiện → MySQL OK.
+- 🔄 **GĐ2 đang dở** — đã tạo file nhưng **CHƯA nối + CHƯA test + CHƯA commit lúc dừng** (được commit kèm lần cập nhật memorybank này): `web/src/lib/print.js` (in tem 50×50), `web/src/components/AttendeeFields.vue`, `web/src/views/tabs/BoothsTab.vue`, `AttendeesTab.vue`, `StaffTab.vue`.
+  - **Việc tiếp theo ngay:** sửa `EventDetailView.vue` — thay khối placeholder bằng dynamic component map các tab (dùng defineAsyncComponent), truyền `:ev` + `@reload`; rồi test 3 tab GĐ2 qua preview → commit.
+- ⏳ **GĐ3–4 còn lại (chưa làm):** các tab `scan` (QR camera html5-qrcode), `reception`, `pair` (gán thẻ), `badges` (kho phôi), `email` (soạn 2 chế độ + upload ảnh + preview), `report`, `monitor`, `dashboard`. Tham chiếu logic từ bản vanilla `public/app.js` trên nhánh main.
+- ⏳ **GĐ5:** build Vue (`cd web && npm run build`), Docker hóa (Dockerfile.internal cần bỏ python/g++ vì mysql2 pure JS + thêm service MySQL vào compose), gỡ `better-sqlite3` khỏi package.json, bàn giao.
+
+### Môi trường dev (cách chạy lại sau khi clear/khởi động lại máy)
+```bash
+# 1. MySQL (nếu container đã xoá):
+docker run -d --name checkin-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=checkin \
+  -e MYSQL_USER=checkin -e MYSQL_PASSWORD=checkinpw -p 3307:3306 mysql:8
+# 2. Backend (nhánh rewrite-vue-mysql):
+cd misa-event-checkin && PORT=3000 DB_PORT=3307 node server.js
+# 3. Frontend dev:
+cd misa-event-checkin/web && npm run dev   # http://localhost:5173
+```
+Preview (Claude Code): launch config `misa-checkin-web` (port 5173) đã có trong `~/.claude/launch.json`. Đăng nhập super admin: tuanbui88vn@gmail.com / SocTho0607!9@@.
+
+### Lưu ý kỹ thuật đã gặp
+- `MDialog` (MDS): mặc định `type='default'` chỉ 1 nút và nút đó CHÍNH là `@confirm`. Muốn nút "Lưu" + có "Hủy" → đặt `type="confirm" confirm-text="Lưu"`.
+- MDS components dùng Tailwind → `web/tailwind.config.js` phải quét cả `src/components/mds`.
+- Chưa gỡ `better-sqlite3` khỏi package.json (không còn dùng) — gỡ ở GĐ5.
+
 ## 11. Quy tắc cập nhật file này
 
 Áp dụng cho mọi AI (Claude hoặc khác) làm việc trên dự án này:

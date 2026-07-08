@@ -133,6 +133,16 @@ DEPLOY.md           Thông tin deploy (hơi cũ)
 ### `email_images` — ảnh header/footer lưu **trong DB** (BLOB)
 `event_id, kind ('header'|'footer'), mime, data (BLOB)` — PK kép `(event_id, kind)`. Lý do lưu BLOB thay vì file: Litestream chỉ sao lưu file DB, không sao lưu `uploads/` → ảnh phải nằm trong DB mới không mất khi container restart.
 
+### `badges` — kho phôi thẻ in sẵn (badge pairing)
+| Cột | Ý nghĩa |
+|---|---|
+| id, event_id | PK, thuộc sự kiện (CASCADE) |
+| code | Mã in trên phôi thẻ — số tuần tự trong 1 sự kiện, pad 4 chữ số (`0001`, `0002`...). UNIQUE `(event_id, code)` |
+| attendee_id | Khách được gán (NULL = phôi trắng chưa gán); ON DELETE SET NULL |
+| status | `active` (đang dùng) \| `stopped` (đã ngừng — xử lý mất thẻ/chống gian lận) |
+| paired_at, paired_by | Thời điểm + người gán |
+Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm thẻ mới). Mã QR in trên phôi mã hoá chuỗi `{eventId}-{code}` (chống nhầm chéo sự kiện); số in bên dưới chỉ là `{code}` để gõ tay khi camera lỗi.
+
 ### `booths`
 `id, event_id, name, sort`.
 
@@ -184,6 +194,15 @@ DEPLOY.md           Thông tin deploy (hơi cũ)
 - `POST /api/attendees/:id/send-email`, `POST /api/events/:id/send-emails` `{ids:[]}`, `POST /api/events/:id/send-all-emails`
 - `GET/PUT /api/smtp`, `POST /api/smtp/test`
 
+### Phôi thẻ (badge)
+- `POST /api/events/:id/badges/generate` `{count}` — sinh thêm phôi số tuần tự tiếp theo (admin)
+- `GET /api/events/:id/badges` — danh sách phôi + thống kê (total/paired/unpaired/stopped) (admin)
+- `GET /api/events/:id/badges/export` — tải **ZIP** chứa các file SVG (QR + mã ID) + CSV danh sách + hướng dẫn, để gửi nhà in (admin)
+- `GET /api/events/:id/badges/lookup?token=` — tra khách theo mã QR email HOẶC mã phôi, kèm các thẻ đang gán (lễ tân/nhân viên/admin)
+- `POST /api/events/:id/badges/pair` `{attendee_token, badge_code, force?}` — gán phôi cho khách + tự check-in; 409 `duplicate` nếu phôi đã có chủ (gán lại bằng `force:true`)
+- `PUT /api/events/:id/badges/:badgeId/status` `{status:'stopped'|'active'}` — ngừng/dùng lại 1 thẻ
+- Quét (`POST .../scan`) nay nhận diện cả mã phôi thẻ: trả thêm status `badge_stopped` (đã ngừng) / `badge_unassigned` (phôi trắng chưa gán) ngoài các status cũ
+
 ### Báo cáo & số liệu
 - `GET /api/events/:id/report` / `GET /api/events/:id/report/export` (Excel) — **chặn** `supervisor`/`manager` (có PII)
 - `GET /api/events/:id/stats` — vector ẩn danh (không tên/email/SĐT), dùng cho dashboard `manager`
@@ -231,6 +250,15 @@ Tìm attendee theo qr_token:
 ### 5.5 Điều kiện tham dự (eligibility)
 `events.eligibility_field` + `eligibility_values` (JSON). Rỗng field hoặc rỗng values → ai cũng đủ điều kiện. Không đủ điều kiện: khoá nút gửi email (không xoá được khách, vẫn sửa được), gửi hàng loạt tự bỏ qua, báo cáo có cột "Đủ điều kiện".
 
+### 5.7 Phôi thẻ in sẵn + gán thẻ (badge pairing)
+Giải pháp phát thẻ cứng cho khách tại quầy **không cần máy in tại chỗ** — thay cho việc in tem trực tiếp (né hẳn vướng mắc máy in Bluetooth/iPhone).
+1. **Chuẩn bị:** admin vào tab **Phôi thẻ** → nhập số lượng → sinh mã số tuần tự → **Xuất ZIP** các file SVG (QR mã hoá `{eventId}-{code}` + số ID) → gửi nhà in in số nhảy lên thẻ màu thiết kế riêng của sự kiện.
+2. **Tại quầy (ngày sự kiện):** lễ tân vào tab **Gán thẻ** → quét mã QR email của khách → quét mã trên phôi thẻ → hệ thống gán 2 mã + **tự check-in**. Cảnh báo nếu phôi đã có chủ (chống nhầm).
+3. **Tại booth:** nhân viên quét mã trên thẻ (phôi) → resolve về khách → ghi nhận hành trình như thường. Quét (`scan`) hiểu cả mã QR email lẫn mã phôi.
+4. **Mất thẻ / chống gian lận:** quét lại mã QR email của khách → bấm **Ngừng** thẻ cũ (status `stopped`) → quét thẻ mới. Thẻ đã ngừng nếu bị quét sẽ báo đỏ "đã ngừng sử dụng". 1 khách có thể có nhiều thẻ đang dùng.
+- **Dự phòng khi hết phôi:** vẫn in tem tại chỗ bằng máy in nhiệt **USB** (nút 🖨 in tem khổ **50×50mm** vuông, dưới QR in "Tên - Công ty"). Tem này chứa chính mã QR của khách → quét thẳng ở booth, **không cần gán**.
+- Chế độ phôi thẻ **bật/tắt theo sự kiện**: chỉ hiện tab "Gán thẻ" cho lễ tân/nhân viên khi sự kiện đã có phôi (`badge_count > 0`); sự kiện không dùng thẻ vẫn quét mã email trực tiếp như cũ.
+
 ### 5.6 Gửi email
 3 loại: xác nhận (kèm QR, lúc thêm khách/import/bấm gửi), cảm ơn (tự động N phút sau check-in, scheduler quét mỗi 60s, tối đa 20/lần), test SMTP. Kênh: Brevo API (ưu tiên, bắt buộc trên cloud vì SMTP outbound bị chặn) hoặc Gmail SMTP (chỉ local). `buildEmail()` có 3 mode ảnh: `cid` (SMTP, đính kèm), `web` (xem trước, relative path), `remote` (Brevo, URL tuyệt đối qua `BASE_URL`).
 
@@ -246,14 +274,16 @@ Tìm attendee theo qr_token:
 ### Danh sách trang/tab theo role
 | Trang/tab | Ai thấy |
 |---|---|
-| Danh sách sự kiện, Người tham dự, Quét QR (đủ quyền), Booth, Email, Báo cáo, Nhân viên, Thành viên, Cấu hình SMTP | admin/super_admin |
-| Quét QR, Đã check-in | `checkin` |
-| Lễ tân & in QR | `reception` |
+| Danh sách sự kiện, Người tham dự, Quét QR (đủ quyền), Booth, **Phôi thẻ**, Email, Báo cáo, Nhân viên, Thành viên, Cấu hình SMTP | admin/super_admin |
+| Quét QR, Đã check-in, **Gán thẻ** (nếu SK có phôi) | `checkin` |
+| Lễ tân & in QR, **Gán thẻ** (nếu SK có phôi) | `reception` |
 | Ghi chú booth (giám sát) | `supervisor` |
 | Số liệu (dashboard ẩn danh) | `manager` |
 
+Hàm mới: `tabBadges()` (admin: sinh/xuất/quản lý phôi), `tabPair()` (lễ tân: quét kép gán thẻ, xử lý mất thẻ; camera + nhập tay).
+
 ### Tính năng UI đặc biệt
-- **In tem QR nhiệt:** khổ 50×30mm, mở popup + `@page{size:50mm 30mm;margin:0}` + `window.print()` khi ảnh QR load xong. Chỉ hiện nút in ở Báo cáo (người đã check-in) và ở Lễ tân.
+- **In tem QR nhiệt (dự phòng):** `printQr()` khổ **50×50mm vuông**, `@page{size:50mm 50mm}` + `window.print()` khi ảnh QR load xong; QR 34mm, dưới in "Tên - Công ty". Chỉ hiện nút in ở Báo cáo (người đã check-in) và ở Lễ tân. Dùng máy in nhiệt USB, in từ Chrome.
 - **Import Excel:** mẫu tải sẵn (nút "Tải Excel mẫu"), validate trùng SĐT/email, báo lỗi theo dòng, tối đa hiện 8 lỗi.
 - **PWA:** `manifest.webmanifest` (standalone, theme `#2563eb`) + `sw.js` (cache-first cho asset tĩnh, network-only cho `/api/` và `/uploads/`, fallback `index.html` cho SPA routing khi 404). `overscroll-behavior:none` chặn pull-to-refresh khi quét QR trên di động.
 - **Khoá theo ngày:** nhân viên (trừ `manager`) không mở được sự kiện khác ngày hôm nay — chặn cả UI và server.
@@ -295,7 +325,9 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 9. Server luôn override `booth_id` gửi từ client nếu người gọi là nhân viên `checkin`/`reception`/`supervisor` — không tin client cho vị trí quét.
 10. `staff_type` mới (`reception`, `supervisor`, `manager`) được thêm sau `checkin` gốc — khi sửa logic quét/báo cáo/danh sách khách, luôn kiểm tra đủ 4 loại, đặc biệt 2 loại `VIEW_ONLY_TYPES` (supervisor/manager) bị chặn hẳn khỏi Báo cáo (có PII) và khỏi quét QR.
 11. PowerShell 5.1 gửi JSON tiếng Việt qua `curl` phải ghi file UTF-8 không BOM rồi `-d "@file"`.
-12. Web Bluetooth API không hỗ trợ trên Safari/iOS — máy in nhiệt Bluetooth kiểu CLab 221B (dùng app riêng, không ESC/POS công khai) không thể in trực tiếp từ web trên iPhone; xem quyết định ở mục 9 (2026-07-06).
+12. Web Bluetooth API không hỗ trợ trên Safari/iOS — máy in nhiệt Bluetooth kiểu CLab 221B (dùng app riêng, không ESC/POS công khai) không thể in trực tiếp từ web trên iPhone; xem quyết định ở mục 9 (2026-07-06). Đã thay bằng mô hình phôi thẻ in sẵn (mục 5.7) + in tem USB dự phòng.
+13. Mã QR trên phôi thẻ mã hoá `{eventId}-{code}` (không chỉ `{code}`) để chống nhầm chéo sự kiện khi 2 sự kiện có cùng số phôi. `findBadge()` trong api.js xử lý cả 2 dạng (QR có prefix eventId, và số gõ tay không prefix). Thứ tự resolve khi quét: thử `qr_token` của khách (hex 20 ký tự) trước, không thấy mới thử mã phôi.
+14. Cần `jszip` (dependency mới) để xuất ZIP bộ SVG phôi thẻ — dev chạy `npm install` là có.
 
 ---
 
@@ -315,14 +347,25 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 9. **Thêm vị trí Quản lý (xem số liệu)** (`d4ee095`) — `staff_type='manager'`: dashboard ẩn danh (không PII), lọc theo mức độ/chức vụ/quy mô/booth, không bị khoá theo ngày sự kiện (khác các staff_type khác). Why: quản lý cấp trên cần xem tiến độ đăng ký/tham dự cả trước và sau sự kiện, nhưng không cần và không nên thấy thông tin cá nhân khách.
 10. **Tối ưu UI dashboard Quản lý cho điện thoại** (`76189e3`) — bộ lọc dạng accordion đóng mặc định trên mobile, chip filter, bảng tỷ trọng responsive.
 11. **Di chuyển hạ tầng:** Railway (ban đầu) → Google Cloud Run + Litestream (chính thức, ổn định lâu dài hơn cho sự kiện thật).
-12. **Tư vấn máy in nhiệt CLab 221B** (2026-07-06, trao đổi không có commit code) — chủ dự án hỏi có thể in QR trực tiếp từ mobile browser sau khi quét, không qua app "Clabel Trade" của hãng. Kết luận: **không khả thi trực tiếp** — CLab 221B dùng giao thức Bluetooth riêng (không công khai ESC/POS), và Safari/iOS không hỗ trợ Web Bluetooth API. Khuyến nghị 2 hướng: (a) đổi sang máy in Bluetooth công khai ESC/POS + Android để in thẳng từ web; (b) dùng quầy cố định với máy in nhiệt nối USB vào laptop/mini-PC (ổn định nhất, không phụ thuộc hệ điều hành điện thoại). Chưa chốt phương án — đang chờ chủ dự án xác nhận nhân viên dùng iPhone hay Android.
+12. **Tư vấn máy in nhiệt CLab 221B** (2026-07-06, trao đổi không có commit code) — chủ dự án hỏi có thể in QR trực tiếp từ mobile browser sau khi quét, không qua app "Clabel Trade" của hãng. Kết luận: **không khả thi trực tiếp** — CLab 221B dùng giao thức Bluetooth riêng (không công khai ESC/POS), và Safari/iOS không hỗ trợ Web Bluetooth API. Dẫn tới quyết định chuyển sang mô hình phôi thẻ in sẵn (mục 13).
+13. **Phôi thẻ in sẵn + gán thẻ (badge pairing)** (2026-07-08) — thay cho việc in tem tại chỗ. Xem chi tiết luồng ở mục 5.7. Các quyết định nghiệp vụ đã chốt với chủ dự án:
+    - Phôi **dùng 1 lần** (in màu theo từng sự kiện) → mã chỉ cần duy nhất trong 1 sự kiện.
+    - Mất thẻ: gán thêm thẻ mới, **có nút Ngừng thẻ cũ** (chống gian lận lấy quà — 1 người báo mất để làm nhiều thẻ cho người khác).
+    - Mã ID **số tuần tự dễ gõ** (0001...), QR trên + số dưới, khung vuông 1:1.
+    - Xuất **SVG** (vector, in nét mọi kích thước), đóng gói **ZIP** để gửi nhà in in số nhảy; nhà in tự ghép QR vào thiết kế thẻ màu (phương án đã chốt sau khi tư vấn: nhà in dùng in dữ liệu biến đổi/VDP).
+    - **Giữ song song** cách cũ (quét mã email trực tiếp) cho sự kiện không dùng thẻ.
+    - **Dự phòng khi hết phôi:** in tem QR của khách bằng máy in nhiệt **USB**, khổ **50×50mm**, dưới QR in "Tên - Công ty". Tem chứa mã khách → quét thẳng, không cần gán.
+    - UI màn hình mới theo tinh thần MISA Design System nhưng **giữ tông màu #2563eb** hiện có (không viết lại app cũ) — theo lựa chọn của chủ dự án để an toàn trước khi bàn giao dev.
+    - Đã test 14 kịch bản backend + kiểm tra UI qua preview (sinh phôi, gán thẻ, ngừng thẻ, xuất ZIP, quét resolve badge) — tất cả pass.
 
 ---
 
 ## 10. Công việc đang mở / cần theo dõi
 
-- [ ] Chốt phương án in tem QR tại hiện trường (máy in nhiệt CLab 221B hay đổi máy khác) — xem mục 9.12.
+- [ ] **Tích hợp thanh toán vé** (misaamis → store.misa.vn → check-in): đã soạn yêu cầu kỹ thuật ở [YEU-CAU-TICH-HOP-THANH-TOAN.md](YEU-CAU-TICH-HOP-THANH-TOAN.md), đang chờ team Store xác nhận có webhook thanh toán không. Khi có: thêm cột `payment_status` cho attendees + API đăng ký công khai + endpoint nhận webhook (xác thực HMAC).
+- [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
+- [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
 
 ---
 

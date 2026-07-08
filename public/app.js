@@ -316,13 +316,17 @@ async function pageEventDetail(main, id, tab) {
     tabs = [['dashboard', '📊 Số liệu']];
   } else if (staffType === 'reception') {
     tab = tab || 'scan';
-    tabs = [['scan', '📷 Quét & Check-in'], ['reception', '🖨 Danh sách & In QR']];
+    tabs = [['scan', '📷 Quét & Check-in']];
+    if (ev.badge_count) tabs.push(['pair', '🎫 Gán thẻ']);
+    tabs.push(['reception', '🖨 Danh sách & In QR']);
   } else if (isCheckinStaff) {
     tab = tab || 'scan';
-    tabs = [['scan', '📷 Quét QR'], ['attendees', '✅ Đã check-in']];
+    tabs = [['scan', '📷 Quét QR']];
+    if (ev.badge_count) tabs.push(['pair', '🎫 Gán thẻ']);
+    tabs.push(['attendees', '✅ Đã check-in']);
   } else {
     tab = tab || 'attendees';
-    tabs = [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR'], ['booths', '🧭 Booth'], ['email', '✉️ Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên']];
+    tabs = [['attendees', '👥 Người tham dự'], ['scan', '📷 Quét QR'], ['booths', '🧭 Booth'], ['badges', '🎫 Phôi thẻ'], ['email', '✉️ Email'], ['report', '📊 Báo cáo'], ['staff', '🧑‍💼 Nhân viên']];
   }
 
   main.innerHTML = `
@@ -356,6 +360,8 @@ async function pageEventDetail(main, id, tab) {
   else if (tab === 'monitor') tabMonitor(content, ev);
   else if (tab === 'dashboard') tabManager(content, ev);
   else if (tab === 'booths') tabBooths(content, ev);
+  else if (tab === 'badges') tabBadges(content, ev);
+  else if (tab === 'pair') tabPair(content, ev);
   else if (tab === 'email') tabEmail(content, ev);
   else if (tab === 'report') tabReport(content, ev);
   else if (tab === 'staff') tabStaff(content, ev);
@@ -405,6 +411,177 @@ async function tabBooths(box, ev) {
     await api('/booths/' + b.dataset.delbooth, { method: 'DELETE' });
     tabBooths(box, ev);
   });
+}
+
+// ----- Tab: Phôi thẻ in sẵn (quản trị viên: sinh mã, xuất SVG cho nhà in, quản lý) -----
+async function tabBadges(box, ev) {
+  const d = await api(`/events/${ev.id}/badges`);
+  box.innerHTML = `
+  <div class="hint">🎫 <b>Phôi thẻ in sẵn</b> giúp phát thẻ cứng cho khách ngay tại quầy mà không cần máy in tại chỗ.
+    Quy trình: (1) Sinh phôi & xuất file SVG gửi nhà in in số nhảy → (2) Ngày sự kiện, lễ tân vào tab <b>🎫 Gán thẻ</b>: quét mã QR của khách rồi quét mã phôi → hệ thống gán 2 mã với nhau và check-in luôn → (3) Khách cầm thẻ đi các booth, nhân viên quét mã trên thẻ để ghi nhận hành trình.</div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <h3>Sinh & xuất phôi thẻ</h3>
+      <a class="btn green" id="bg-export" href="/api/events/${ev.id}/badges/export" download ${d.total ? '' : 'style="pointer-events:none;opacity:.5"'}>⬇ Xuất bộ SVG (ZIP) gửi nhà in</a>
+    </div>
+    <p class="muted" style="margin:6px 0 12px">Nhập số lượng phôi cần in — hệ thống tự sinh mã số tuần tự (0001, 0002, …). Mỗi phôi là 1 ảnh QR vuông kèm mã ID; xuất cả bộ (dạng ZIP các file SVG) để gửi nhà in ghép vào thiết kế thẻ.</p>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div><label style="margin-top:0">Số lượng phôi cần in thêm</label><input type="number" id="bg-count" min="1" max="2000" value="100" style="max-width:170px"></div>
+      <button class="btn" id="bg-gen">+ Sinh phôi</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num">${d.total}</div><div class="lbl">Tổng phôi</div></div>
+    <div class="stat green"><div class="num">${d.paired}</div><div class="lbl">Đã gán khách</div></div>
+    <div class="stat"><div class="num">${d.unpaired}</div><div class="lbl">Phôi trắng</div></div>
+    <div class="stat orange"><div class="num">${d.stopped}</div><div class="lbl">Đã ngừng</div></div>
+  </div>
+
+  <div class="toolbar">
+    <input id="bg-search" placeholder="🔍 Tìm theo mã phôi hoặc tên khách..." style="flex:1;min-width:220px">
+    <select id="bg-filter"><option value="">Tất cả</option><option value="paired">Đã gán</option><option value="unpaired">Phôi trắng</option><option value="stopped">Đã ngừng</option></select>
+  </div>
+  <div class="muted" id="bg-count-lbl" style="margin-bottom:10px"></div>
+  <div class="table-wrap"><table><thead><tr>
+    <th>Mã phôi</th><th>Trạng thái</th><th>Gán cho khách</th><th></th>
+  </tr></thead><tbody id="bg-body"></tbody></table></div>`;
+
+  const body = document.getElementById('bg-body');
+  function filtered() {
+    const q = document.getElementById('bg-search').value.trim().toLowerCase();
+    const f = document.getElementById('bg-filter').value;
+    return d.rows.filter(r => {
+      if (f === 'paired' && !r.attendee_id) return false;
+      if (f === 'unpaired' && r.attendee_id) return false;
+      if (f === 'stopped' && r.status !== 'stopped') return false;
+      return !q || (r.code + ' ' + (r.attendee_name || '')).toLowerCase().includes(q);
+    });
+  }
+  function render() {
+    const rows = filtered();
+    document.getElementById('bg-count-lbl').innerHTML = `Hiển thị <b>${rows.length}</b> / tổng <b>${d.rows.length}</b> phôi`;
+    body.innerHTML = rows.length ? rows.map(r => {
+      const st = r.status === 'stopped' ? '<span class="badge red">Đã ngừng</span>'
+        : r.attendee_id ? '<span class="badge green">Đang dùng</span>' : '<span class="badge gray">Phôi trắng</span>';
+      const who = r.attendee_id ? `<b>${esc(r.attendee_name)}</b>${r.attendee_company ? ' · ' + esc(r.attendee_company) : ''}` : '<span class="muted">—</span>';
+      const act = r.attendee_id ? (r.status === 'stopped'
+        ? `<button class="btn small secondary" data-reuse="${r.id}">Dùng lại</button>`
+        : `<button class="btn small danger" data-stop="${r.id}">Ngừng</button>`) : '';
+      return `<tr><td><b>${esc(r.code)}</b></td><td>${st}</td><td>${who}</td><td style="white-space:nowrap">${act}</td></tr>`;
+    }).join('') : `<tr><td colspan="4" class="muted">Chưa có phôi nào. Nhập số lượng và bấm "Sinh phôi".</td></tr>`;
+    body.querySelectorAll('[data-stop]').forEach(b => b.onclick = () => setStatus(b.dataset.stop, 'stopped'));
+    body.querySelectorAll('[data-reuse]').forEach(b => b.onclick = () => setStatus(b.dataset.reuse, 'active'));
+  }
+  async function setStatus(id, status) {
+    try { await api(`/events/${ev.id}/badges/${id}/status`, { method: 'PUT', body: { status } }); tabBadges(box, ev); }
+    catch (e) { toast('Lỗi: ' + e.message); }
+  }
+  ['bg-search', 'bg-filter'].forEach(id => document.getElementById(id).oninput = render);
+  render();
+
+  document.getElementById('bg-gen').onclick = async () => {
+    const count = Number(document.getElementById('bg-count').value);
+    if (!count) return toast('Nhập số lượng phôi cần sinh');
+    try {
+      const r = await api(`/events/${ev.id}/badges/generate`, { method: 'POST', body: { count } });
+      toast(`Đã sinh ${r.added} phôi (mã ${r.from} → ${r.to})`); tabBadges(box, ev);
+    } catch (e) { toast('Lỗi: ' + e.message); }
+  };
+}
+
+// ----- Tab: Gán thẻ (lễ tân quét mã khách + mã phôi để gán; xử lý mất thẻ) -----
+async function tabPair(box, ev) {
+  let guest = null; // { attendee, badges } - khách đang thao tác
+  let busy = false;
+  box.innerHTML = `
+  <div class="hint">🎫 <b>Gán thẻ cho khách</b>: (1) Quét mã QR trong email của khách → (2) Quét mã trên phôi thẻ → hệ thống gán 2 mã với nhau và check-in luôn.
+    Khách báo <b>mất thẻ</b>: quét lại mã QR email của khách, bấm <b>Ngừng</b> thẻ cũ rồi quét thẻ mới cho khách.</div>
+  <div class="scan-layout">
+    <div class="card">
+      <label style="margin-top:0" id="pair-step-lbl">Bước 1 — Quét mã QR của khách (trên email)</label>
+      <div id="pair-reader"></div>
+      <div class="muted" style="margin-top:10px">Camera không hoạt động? Nhập mã thủ công:</div>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <input id="pair-manual" placeholder="Nhập mã QR khách hoặc mã phôi thẻ...">
+        <button class="btn" id="pair-manual-btn">OK</button>
+      </div>
+      <button class="btn secondary" id="pair-reset" style="margin-top:12px;width:100%;justify-content:center">↺ Chuyển sang khách mới</button>
+    </div>
+    <div><div class="scan-result idle" id="pair-result">Quét mã QR của khách để bắt đầu</div></div>
+  </div>`;
+
+  const resultBox = document.getElementById('pair-result');
+  const stepLbl = document.getElementById('pair-step-lbl');
+
+  function renderGuest() {
+    if (!guest) {
+      resultBox.className = 'scan-result idle';
+      resultBox.textContent = 'Quét mã QR của khách để bắt đầu';
+      stepLbl.textContent = 'Bước 1 — Quét mã QR của khách (trên email)';
+      return;
+    }
+    const a = guest.attendee;
+    stepLbl.textContent = 'Bước 2 — Quét mã trên phôi thẻ để gán cho khách này';
+    const badgesHtml = guest.badges.length ? guest.badges.map(b => `
+      <div class="info-line"><span>🎫 Thẻ <b>${esc(b.code)}</b> ${b.status === 'stopped' ? '<span class="badge red">đã ngừng</span>' : '<span class="badge green">đang dùng</span>'}</span>
+        <span>${b.status === 'stopped' ? `<button class="btn small secondary" data-reuse="${b.id}">Dùng lại</button>` : `<button class="btn small danger" data-stop="${b.id}">Ngừng</button>`}</span></div>`).join('')
+      : '<div class="muted" style="padding:4px 0">Chưa gán thẻ nào — hãy quét 1 phôi thẻ để gán.</div>';
+    resultBox.className = 'scan-result valid';
+    resultBox.innerHTML = `<h3 style="color:var(--green)">👤 ${esc((a.salutation ? a.salutation + ' ' : '') + a.name)}</h3>
+      <div class="info-line"><b>Công ty:</b><span>${esc(a.company) || '—'}</span></div>
+      <div class="info-line"><b>Check-in:</b><span>${a.checked_in_at ? '✅ ' + fmtDate(a.checked_in_at, true) : 'Chưa'}</span></div>
+      <div style="margin-top:10px"><b>Thẻ của khách:</b>${badgesHtml}</div>`;
+    resultBox.querySelectorAll('[data-stop]').forEach(b => b.onclick = () => setBadgeStatus(b.dataset.stop, 'stopped'));
+    resultBox.querySelectorAll('[data-reuse]').forEach(b => b.onclick = () => setBadgeStatus(b.dataset.reuse, 'active'));
+  }
+  async function setBadgeStatus(id, status) {
+    try {
+      await api(`/events/${ev.id}/badges/${id}/status`, { method: 'PUT', body: { status } });
+      const b = guest.badges.find(x => x.id == id); if (b) b.status = status;
+      renderGuest(); toast(status === 'stopped' ? 'Đã ngừng thẻ cũ' : 'Đã bật lại thẻ');
+    } catch (e) { toast('Lỗi: ' + e.message); }
+  }
+  async function pair(badgeToken, force) {
+    try {
+      const r = await api(`/events/${ev.id}/badges/pair`, { method: 'POST', body: { attendee_token: guest.attendee.qr_token, badge_code: badgeToken, force } });
+      guest.attendee = r.attendee; guest.badges = r.badges; renderGuest();
+      toast(r.message); if (navigator.vibrate) navigator.vibrate(100);
+    } catch (e) {
+      if (e.data && e.data.duplicate) { if (confirm(e.message)) await pair(badgeToken, true); }
+      else { toast('Lỗi: ' + e.message); if (navigator.vibrate) navigator.vibrate([80, 60, 80]); }
+    }
+  }
+  async function handleToken(token) {
+    if (busy) return; busy = true;
+    try {
+      if (!guest) {
+        const r = await api(`/events/${ev.id}/badges/lookup?token=${encodeURIComponent(token)}`);
+        guest = { attendee: r.attendee, badges: r.badges }; renderGuest();
+        if (navigator.vibrate) navigator.vibrate(100);
+      } else {
+        await pair(token, false);
+      }
+    } catch (e) { toast('Lỗi: ' + e.message); if (navigator.vibrate) navigator.vibrate([80, 60, 80]); }
+    setTimeout(() => { busy = false; }, 1200);
+  }
+
+  document.getElementById('pair-manual-btn').onclick = () => {
+    const inp = document.getElementById('pair-manual');
+    if (inp.value.trim()) { handleToken(inp.value.trim()); inp.value = ''; }
+  };
+  document.getElementById('pair-manual').onkeydown = e => { if (e.key === 'Enter') document.getElementById('pair-manual-btn').click(); };
+  document.getElementById('pair-reset').onclick = () => { guest = null; renderGuest(); };
+
+  try {
+    scanner = new Html5Qrcode('pair-reader');
+    await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 220, height: 220 } }, (text) => handleToken(text.trim()), () => {});
+  } catch (e) {
+    document.getElementById('pair-reader').innerHTML =
+      `<div style="padding:18px" class="muted">Không mở được camera (${esc(e.message || e)}).<br>Camera chỉ chạy trên <b>localhost</b> hoặc <b>HTTPS</b>. Bạn vẫn có thể nhập mã thủ công bên dưới.</div>`;
+  }
+  renderGuest();
 }
 
 // ----- Tab: Người tham dự -----
@@ -622,28 +799,28 @@ function attendeeFormModal(ev, onSaved, attendee = null) {
   };
 }
 
-// In tem QR khổ nhỏ (máy in nhiệt PD304) - chỉ gồm QR + danh xưng + họ tên + nơi công tác
-// Khổ tem mặc định 50×30mm; đổi LABEL_W/LABEL_H nếu dùng khổ khác.
+// In tem QR dự phòng (máy in nhiệt USB) khi khách đông hơn số phôi thẻ in sẵn.
+// Tem chứa chính mã QR của khách -> quét thẳng ở booth, không cần gán. Khổ vuông 50×50mm.
+// Dưới QR in "Tên - Công ty" (VD: Tuấn Xoăn - Công ty ABC).
 function printQr(r, evName) {
-  const LABEL_W = '50mm', LABEL_H = '30mm';
-  const fullName = (r.salutation ? r.salutation + ' ' : '') + r.name;
+  const LABEL = '50mm';
+  const line = r.company ? `${r.name} - ${r.company}` : r.name;
   const w = window.open('', '_blank');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tem QR</title>
     <style>
-      @page { size: ${LABEL_W} ${LABEL_H}; margin: 0; }
+      @page { size: ${LABEL} ${LABEL}; margin: 0; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: ${LABEL_W}; }
-      .label { width: ${LABEL_W}; height: ${LABEL_H}; padding: 1mm 1.5mm; text-align: center;
+      html, body { width: ${LABEL}; height: ${LABEL}; }
+      .label { width: ${LABEL}; height: ${LABEL}; padding: 2mm; text-align: center;
         display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial, sans-serif; }
-      .label img { width: 18mm; height: 18mm; }
-      .nm { font-size: 9px; font-weight: bold; line-height: 1.1; margin-top: 0.6mm; }
-      .co { font-size: 7.5px; color: #222; line-height: 1.05; margin-top: 0.3mm; }
+      .label img { width: 34mm; height: 34mm; }
+      .nm { font-size: 10px; font-weight: bold; line-height: 1.2; margin-top: 1.2mm;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     </style></head>
     <body>
       <div class="label">
         <img src="/api/attendees/${r.id}/qr.png" onload="setTimeout(()=>{window.print();},250)">
-        <div class="nm">${esc(fullName)}</div>
-        ${r.company ? `<div class="co">${esc(r.company)}</div>` : ''}
+        <div class="nm">${esc(line)}</div>
       </div>
     </body></html>`);
   w.document.close();

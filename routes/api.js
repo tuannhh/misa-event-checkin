@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const QRCode = require('qrcode');
+const JSZip = require('jszip');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
@@ -96,6 +97,49 @@ function getAssignment(user, eventId) {
   const row = db.prepare('SELECT booth_id, staff_type FROM event_staff WHERE event_id = ? AND user_id = ?').get(eventId, user.id);
   if (!row) return null;
   return { booth_id: row.booth_id || null, staff_type: STAFF_TYPES.includes(row.staff_type) ? row.staff_type : 'checkin' };
+}
+
+// ============ PHÔI THẺ (badge) ============
+// Tìm phôi thẻ theo mã quét được. Mã QR trên phôi mã hoá "{eventId}-{code}"; nhập tay chỉ cần "{code}".
+// Trả về: bản ghi badge | 'wrong_event' | null
+function findBadge(eventId, token) {
+  let code = token;
+  const m = String(token).match(/^(\d+)-(.+)$/);
+  if (m) { if (Number(m[1]) !== eventId) return 'wrong_event'; code = m[2]; }
+  return db.prepare('SELECT * FROM badges WHERE event_id = ? AND code = ?').get(eventId, code) || null;
+}
+// Tra khách từ mã quét được: ưu tiên mã QR của khách (qr_token), sau đó mới đến mã phôi thẻ đã gán
+function resolveAttendee(eventId, token) {
+  const a = db.prepare('SELECT * FROM attendees WHERE qr_token = ? AND event_id = ?').get(token, eventId);
+  if (a) return a;
+  const badge = findBadge(eventId, token);
+  if (badge && badge !== 'wrong_event' && badge.attendee_id) {
+    return db.prepare('SELECT * FROM attendees WHERE id = ?').get(badge.attendee_id);
+  }
+  return null;
+}
+// Danh sách phôi thẻ đang gán cho 1 khách
+function badgesOfAttendee(attendeeId) {
+  return db.prepare('SELECT id, code, status FROM badges WHERE attendee_id = ? ORDER BY code').all(attendeeId);
+}
+// Quyền thao tác phôi thẻ tại quầy (gán/ngừng): lễ tân + nhân viên check-in (đúng ngày, không phải vị trí chỉ-xem) hoặc admin
+function badgeOpGuard(req, res, ev) {
+  if (req.user.role === 'checkin') {
+    if (!isEventToday(ev)) { res.status(403).json({ error: 'Chỉ thao tác thẻ vào đúng ngày tổ chức sự kiện' }); return false; }
+    const mine = getAssignment(req.user, ev.id);
+    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không gán thẻ' }); return false; }
+    return true;
+  }
+  if (!canManageEvent(req.user, ev)) { res.status(403).json({ error: 'Bạn không có quyền' }); return false; }
+  return true;
+}
+// Dựng 1 phôi thẻ dạng SVG vuông: QR (mã hoá "{eventId}-{code}") ở trên, mã ID ở dưới
+async function buildBadgeSvg(eventId, code) {
+  let qr = await QRCode.toString(`${eventId}-${code}`, { type: 'svg', margin: 0, width: 240 });
+  qr = qr.replace('<svg ', '<svg x="30" y="26" ');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">` +
+    `<rect width="300" height="300" fill="#ffffff"/>${qr}` +
+    `<text x="150" y="288" text-anchor="middle" font-family="'Courier New',monospace" font-size="26" font-weight="700" letter-spacing="1.5" fill="#111827">${code}</text></svg>`;
 }
 
 // ============ ĐĂNG NHẬP ============
@@ -262,7 +306,8 @@ router.get('/events/:id', requireLogin, (req, res) => {
     const b = boothId ? booths.find(x => x.id === boothId) : null;
     my_position = { booth_id: b ? b.id : null, name: b ? b.name : 'Cổng check-in', staff_type: mine ? mine.staff_type : 'checkin' };
   }
-  res.json({ ...ev, staff, booths, my_position, can_manage: canManageEvent(req.user, ev) });
+  const badge_count = db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id).c;
+  res.json({ ...ev, staff, booths, my_position, badge_count, can_manage: canManageEvent(req.user, ev) });
 });
 
 router.put('/events/:id', requireLogin, (req, res) => {
@@ -639,8 +684,20 @@ router.post('/events/:id/scan', requireLogin, (req, res) => {
   const token = String(req.body.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
 
-  const a = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+  let a = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.qr_token = ?`).get(token);
+
+  // Nếu không phải mã QR của khách, thử xem có phải mã phôi thẻ in sẵn không
+  if (!a) {
+    const badge = findBadge(ev.id, token);
+    if (badge === 'wrong_event') return res.json({ status: 'wrong_event', message: 'Thẻ này thuộc sự kiện khác' });
+    if (badge) {
+      if (badge.status === 'stopped') return res.json({ status: 'badge_stopped', message: `Thẻ số ${badge.code} đã bị NGỪNG sử dụng (không hợp lệ)` });
+      if (!badge.attendee_id) return res.json({ status: 'badge_unassigned', message: `Thẻ số ${badge.code} chưa được gán cho khách nào. Hãy gán thẻ tại quầy trước.` });
+      a = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+        LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.id = ?`).get(badge.attendee_id);
+    }
+  }
 
   if (!a) return res.json({ status: 'invalid', message: 'Mã QR không hợp lệ - không có trong hệ thống' });
   if (a.event_id !== ev.id) {
@@ -778,6 +835,111 @@ router.put('/events/:id/booth-note', requireLogin, (req, res) => {
     .run(note, ev.id, r.boothId, attendeeId);
   if (!upd.changes) return res.status(404).json({ error: 'Khách này chưa được ghi nhận ghé booth' });
   res.json({ ok: true });
+});
+
+// ============ PHÔI THẺ IN SẴN (badge) ============
+// Sinh thêm phôi thẻ (số tuần tự tiếp theo trong sự kiện) - chỉ quản trị viên
+router.post('/events/:id/badges/generate', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  const count = Math.min(2000, Math.max(1, Number(req.body.count) || 0));
+  if (!count) return res.status(400).json({ error: 'Nhập số lượng phôi cần in (1 - 2000)' });
+  let maxN = 0;
+  for (const r of db.prepare('SELECT code FROM badges WHERE event_id = ?').all(ev.id)) {
+    const n = parseInt(r.code, 10);
+    if (!isNaN(n) && n > maxN) maxN = n;
+  }
+  const start = maxN + 1;
+  const ins = db.prepare('INSERT OR IGNORE INTO badges (event_id, code) VALUES (?,?)');
+  const tx = db.transaction(() => { for (let i = 0; i < count; i++) ins.run(ev.id, String(start + i).padStart(4, '0')); });
+  tx();
+  res.json({ added: count, from: String(start).padStart(4, '0'), to: String(start + count - 1).padStart(4, '0') });
+});
+
+// Danh sách phôi thẻ + thống kê - chỉ quản trị viên
+router.get('/events/:id/badges', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  const rows = db.prepare(`SELECT b.id, b.code, b.status, b.attendee_id, b.paired_at,
+      a.name AS attendee_name, a.company AS attendee_company FROM badges b
+    LEFT JOIN attendees a ON a.id = b.attendee_id WHERE b.event_id = ? ORDER BY b.code`).all(ev.id);
+  const total = rows.length;
+  const paired = rows.filter(r => r.attendee_id).length;
+  const stopped = rows.filter(r => r.status === 'stopped').length;
+  res.json({ rows, total, paired, unpaired: total - paired, stopped });
+});
+
+// Xuất toàn bộ phôi thẻ thành file ZIP chứa các ảnh SVG (QR + mã ID) để gửi nhà in
+router.get('/events/:id/badges/export', requireLogin, async (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  const badges = db.prepare('SELECT code FROM badges WHERE event_id = ? ORDER BY code').all(ev.id);
+  if (!badges.length) return res.status(400).json({ error: 'Chưa có phôi thẻ nào để xuất. Hãy sinh phôi trước.' });
+  const zip = new JSZip();
+  let csv = 'STT,Ma the\n';
+  for (const [i, b] of badges.entries()) {
+    zip.file(`${b.code}.svg`, await buildBadgeSvg(ev.id, b.code));
+    csv += `${i + 1},${b.code}\n`;
+  }
+  zip.file('danh-sach-ma.csv', '﻿' + csv); // BOM để Excel đọc đúng tiếng Việt
+  zip.file('HUONG-DAN.txt', `PHOI THE SU KIEN: ${ev.name}\n\n` +
+    `- Moi file .svg la 1 phoi the (QR + ma ID ben duoi), khung vuong ti le 1:1.\n` +
+    `- SVG la anh vector: in net o moi kich thuoc.\n` +
+    `- Gui ca thu muc nay cho nha in de ho ghep vao thiet ke the mau (in so nhay).\n` +
+    `- Tong so phoi: ${badges.length}.\n`);
+  const buf = await zip.generateAsync({ type: 'nodebuffer' });
+  res.setHeader('Content-Disposition', `attachment; filename="phoi-the-su-kien-${ev.id}.zip"`);
+  res.type('application/zip').send(buf);
+});
+
+// Tra khách theo mã quét (mã QR email hoặc mã phôi thẻ) + các thẻ đang gán - phục vụ màn Gán thẻ
+router.get('/events/:id/badges/lookup', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!badgeOpGuard(req, res, ev)) return;
+  const token = String(req.query.token || '').trim();
+  if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
+  const a = resolveAttendee(ev.id, token);
+  if (!a) return res.status(404).json({ error: 'Không tìm thấy khách với mã này. Hãy quét mã QR trong email của khách.' });
+  res.json({ attendee: a, badges: badgesOfAttendee(a.id) });
+});
+
+// Gán 1 phôi thẻ cho khách (quét mã khách + mã phôi). Tự động check-in khách nếu chưa.
+router.post('/events/:id/badges/pair', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!badgeOpGuard(req, res, ev)) return;
+  const guestToken = String(req.body.attendee_token || '').trim();
+  const badgeToken = String(req.body.badge_code || '').trim();
+  if (!guestToken || !badgeToken) return res.status(400).json({ error: 'Cần quét cả mã khách và mã phôi thẻ' });
+  const a = resolveAttendee(ev.id, guestToken);
+  if (!a) return res.status(404).json({ error: 'Không tìm thấy khách với mã này' });
+  const badge = findBadge(ev.id, badgeToken);
+  if (!badge || badge === 'wrong_event') return res.status(404).json({ error: `Không tìm thấy phôi thẻ số "${badgeToken}" trong sự kiện này` });
+  if (badge.attendee_id && badge.attendee_id === a.id) {
+    return res.json({ ok: true, already: true, message: `Thẻ số ${badge.code} đã gán cho khách này rồi`, attendee: a, badges: badgesOfAttendee(a.id) });
+  }
+  if (badge.attendee_id && badge.attendee_id !== a.id && !req.body.force) {
+    const other = db.prepare('SELECT name FROM attendees WHERE id = ?').get(badge.attendee_id);
+    return res.status(409).json({ duplicate: true, error: `Thẻ số ${badge.code} đã gán cho khách khác (${other ? other.name : '?'}). Vẫn gán lại cho khách này?` });
+  }
+  db.prepare("UPDATE badges SET attendee_id = ?, status = 'active', paired_at = datetime('now'), paired_by = ? WHERE id = ?")
+    .run(a.id, req.user.id, badge.id);
+  // Gán thẻ tại quầy = khách đã có mặt -> ghi nhận check-in nếu chưa
+  if (!a.checked_in_at) {
+    db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+  }
+  const fresh = db.prepare('SELECT * FROM attendees WHERE id = ?').get(a.id);
+  res.json({ ok: true, message: `Đã gán thẻ số ${badge.code} cho ${fresh.name}`, attendee: fresh, badges: badgesOfAttendee(a.id) });
+});
+
+// Ngừng / dùng lại 1 phôi thẻ (xử lý mất thẻ, chống gian lận)
+router.put('/events/:id/badges/:badgeId/status', requireLogin, (req, res) => {
+  const ev = getEventOr404(req, res); if (!ev) return;
+  if (!badgeOpGuard(req, res, ev)) return;
+  const badge = db.prepare('SELECT * FROM badges WHERE id = ? AND event_id = ?').get(req.params.badgeId, ev.id);
+  if (!badge) return res.status(404).json({ error: 'Không tìm thấy phôi thẻ' });
+  const status = req.body.status === 'stopped' ? 'stopped' : 'active';
+  db.prepare('UPDATE badges SET status = ? WHERE id = ?').run(status, badge.id);
+  res.json({ ok: true, status });
 });
 
 // ============ CÀI ĐẶT EMAIL CỦA SỰ KIỆN ============

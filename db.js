@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS email_images (
   PRIMARY KEY (event_id, kind)
 );
 
+-- Kho phôi thẻ in sẵn: mỗi phôi có 1 mã định danh (số tuần tự), gán với 1 khách tại quầy
+CREATE TABLE IF NOT EXISTS badges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,                                  -- mã in trên phôi thẻ (số tuần tự trong 1 sự kiện)
+  attendee_id INTEGER REFERENCES attendees(id) ON DELETE SET NULL,  -- NULL = phôi trắng chưa gán
+  status TEXT NOT NULL DEFAULT 'active',               -- 'active' = đang dùng | 'stopped' = đã ngừng (mất thẻ/chống gian lận)
+  paired_at TEXT,
+  paired_by INTEGER REFERENCES users(id),
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(event_id, code)
+);
+
 CREATE TABLE IF NOT EXISTS smtp_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   host TEXT DEFAULT 'smtp.gmail.com',

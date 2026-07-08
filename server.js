@@ -2,6 +2,7 @@
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
+const fs = require('fs');
 const { UPLOAD_DIR } = require('./config');
 const db = require('./db');
 const { startThankYouScheduler } = require('./email');
@@ -22,7 +23,10 @@ app.use(session({
 
 app.use('/api', require('./routes/api'));
 app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(path.join(__dirname, 'public')));
+// Ưu tiên bản Vue đã build (public-vue) nếu có; ngược lại dùng bản cũ (public)
+const VUE_DIST = path.join(__dirname, 'public-vue');
+const STATIC_DIR = fs.existsSync(path.join(VUE_DIST, 'index.html')) ? VUE_DIST : path.join(__dirname, 'public');
+app.use(express.static(STATIC_DIR));
 
 // Khởi tạo database (tạo bảng + seed) rồi mới mở cổng
 db.init().then(() => {

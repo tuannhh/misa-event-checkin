@@ -1,0 +1,38 @@
+/* Tokens MDS (biến --mds-*) phải nạp trước Tailwind */
+@import './tokens/base-colors.css';
+@import './tokens/blue.css';
+@import './tokens/font.css';
+@import './tokens/number.css';
+@import './tokens/space-standard.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-bg: #f3f4f6;
+  --app-text: #111827;
+  --app-border: #e5e7eb;
+}
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--mds-font-family-body, Inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-size: 13px;
+  /* Chặn kéo-để-tải-lại khi nhân viên quét QR trên điện thoại */
+  overscroll-behavior: none;
+}
+#app { min-height: 100%; }
+a { color: var(--mds-brand-600, #245FDF); }
+
+/* Tiện ích dùng chung cho các trang */
+.app-container { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
+.card { background: #fff; border: 1px solid var(--app-border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.page-head h2 { font-size: 20px; font-weight: 700; margin: 0; }
+.muted { color: #6b7280; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+@media (max-width: 640px) { .row2 { grid-template-columns: 1fr; } }
+label.fld { display: block; font-weight: 600; margin: 12px 0 5px; font-size: 13px; }

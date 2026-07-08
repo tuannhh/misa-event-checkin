@@ -378,6 +378,47 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
+- [ ] **Giám sát "bóng ma" + Lucky draw + Deploy GCE** (2026-07-08, đã trao đổi & CHỐT phương án, CHƯA CODE) — xem chi tiết đầy đủ ở mục 15 bên dưới. Làm trên nhánh `rewrite-vue-mysql` (bản Vue+MySQL), không đụng bản Cloud Run cũ (SQLite/vanilla).
+
+---
+
+## 15. QUYẾT ĐỊNH NGHIỆP VỤ ĐÃ CHỐT (2026-07-08) — chưa code, làm tiếp trên `rewrite-vue-mysql`
+
+> Nguồn: trao đổi trực tiếp với chủ dự án sau khi seed demo data + làm presentation giới thiệu sản phẩm. Ghi đầy đủ để AI/dev sau không phải hỏi lại.
+
+### 15.1 Làm rõ hiểu lầm "thiếu vai trò"
+Chủ dự án tưởng thiếu 4 vai trò (Lễ tân/Giám sát/Quản lý/Quét QR) vì nhìn nhầm ở form **"Thêm thành viên"** (tạo tài khoản hệ thống, chỉ có role gốc `super_admin`/`admin`/`checkin`). Thực ra 4 vai trò đó là **"Vai trò tại sự kiện"** (`event_staff.staff_type`), gán ở **tab Nhân viên bên trong từng sự kiện** — **đã có đủ** ở cả 2 bản (xem mục 5.4). Không cần sửa gì, chỉ cần hướng dẫn lại đúng chỗ bấm.
+
+### 15.2 Giám sát "bóng ma" (mở rộng `supervisor`) — tra cứu theo mã thẻ, tách khỏi hành trình lucky draw
+**Mô hình nghiệp vụ đúng** (khác giả định ban đầu của AI — đã sửa sau khi hỏi lại):
+- **Lễ tân tại booth**: vẫn quét QR/mã phôi của khách như cũ để **ghi nhận hành trình** (`booth_visits`) — **giữ nguyên, không đổi**.
+- **Giám sát viên** ("bóng ma"): KHÔNG giao tiếp khách, KHÔNG quét, chỉ **liếc thấy mã số in trên thẻ** (VD `0005`) khi khách đang trao đổi với sales → gõ mã vào ứng dụng → tra ra tên khách (VD "Bùi Minh Tuấn – CEO ABC") → ghi chú nhanh (VD "quan tâm phần mềm kế toán") + tick **"Khách hàng tiềm năng"** để sau sự kiện có nhân viên kinh doanh liên hệ lại.
+
+**Vì sao tra được mã thẻ dù khách chưa được lễ tân booth này quét:** mã thẻ (0005) được **gán cho khách ngay từ CỔNG** lúc khách vừa đến sự kiện (luồng phôi thẻ ở mục 5.7 — lễ tân cổng quét QR email + quét mã phôi → hệ thống map `0005 ↔ Bùi Minh Tuấn` cho **toàn sự kiện**, không phải riêng 1 booth). Nên giám sát viên ở bất kỳ booth nào gõ `0005` đều tra ra đúng khách ngay, không phụ thuộc việc lễ tân booth đó đã quét hay chưa.
+
+**Quyết định quan trọng — TÁCH 2 khái niệm:**
+1. **Hành trình ghé booth** (`booth_visits`, do lễ tân quét) → dùng để tính **số booth đã ghé cho lucky draw**.
+2. **Ghi chú + tick tiềm năng của giám sát viên** → lưu **tách biệt**, KHÔNG tự cộng vào số booth hành trình, KHÔNG ảnh hưởng điều kiện quay số.
+- Lý do: nếu gộp chung, giám sát note khách ở booth 3 sẽ vô tình làm khách "đủ điều kiện ghé booth 3" dù lễ tân chưa quét — sai lệch số liệu lucky draw.
+- Hệ quả thiết kế: cần bảng/cơ chế lưu riêng cho "ghi chú giám sát tiềm năng" (không tái dùng thẳng `booth_visits.note` như hiện tại — cần tách cột `is_potential` + note khỏi luồng hành trình, hoặc thêm bảng mới `booth_potential_notes` độc lập, quyết định cụ thể khi thiết kế).
+- Phạm vi áp dụng: tính năng gõ-mã-thẻ chỉ dùng được cho **sự kiện có in phôi thẻ** (cần số in trên thẻ). Sự kiện không dùng phôi → giám sát viên vẫn tra cứu bằng cách tìm tên như hiện tại (không có mã thẻ để gõ).
+
+### 15.3 Lucky Draw — lọc khách đủ điều kiện quay số
+- **Yêu cầu gốc:** sự kiện có N booth, khách phải ghé tối thiểu X booth mới đủ điều kiện quay số (VD 10 booth, cần ≥8).
+- **Đã có sẵn ~90%:** `booth_visits` đã ghi khách nào ghé booth nào; báo cáo + Excel export đã có cột "Số booth đã ghé" (mục 4, endpoint `/report`, `attachBoothVisits()`).
+- **Cần bổ sung:** UI lọc trên tab Báo cáo theo **số booth tối thiểu đã ghé** (VD gõ "≥8") + xuất Excel riêng danh sách đủ điều kiện.
+- **Chốt quan trọng:** ngưỡng số booth **KHÔNG lưu cấu hình cố định theo sự kiện** — để người dùng **tự gõ ngưỡng mỗi lần lọc** trên UI báo cáo, vì mỗi sự kiện có số booth/tiêu chí khác nhau, không nên fix cứng.
+- **Đầu ra:** chỉ cần **xuất Excel danh sách đủ điều kiện** — chủ dự án tự đưa sang ứng dụng quay số bên ngoài. KHÔNG cần làm tính năng bốc số ngẫu nhiên trong app này.
+
+### 15.4 Deploy bản Vue+MySQL lên môi trường thật để test — dùng GCE VM
+- **Đã chốt phương án:** dựng **1 Google Compute Engine (GCE) VM**, chạy đúng `docker-compose.internal.yml` đã test kỹ trên Docker local (app + MySQL trong cùng VM). KHÔNG dùng Cloud Run cho bản này (Cloud Run stateless, cần tách MySQL ra dịch vụ ngoài — phức tạp/tốn hơn cho nhu cầu "chỉ để test").
+- **Project GCP dùng chung:** `prapplication-479309` (cùng project với Cloud Run bản cũ — công ty đã trả phí, có thể dùng cấu hình trả phí nếu cần, không cần tối ưu về 0 đồng).
+- **Quan trọng — đã giải thích rõ với chủ dự án:** GCE VM là máy chủ chạy **trên hạ tầng Google 24/7**, KHÔNG phải máy tính vật lý của chủ dự án — tắt máy cá nhân không ảnh hưởng, mọi người vẫn truy cập được qua internet.
+- **Việc cần làm khi triển khai:** tạo VM (Ubuntu, kích thước đủ chạy Node+MySQL, ví dụ e2-small/medium tuỳ tải), cài Docker + docker-compose, clone nhánh `rewrite-vue-mysql`, chạy `docker compose -f docker-compose.internal.yml up -d --build`, cấu hình HTTPS (Caddy hoặc reverse proxy + domain/subdomain riêng — chưa chốt tên miền, cần hỏi lại khi tới bước này), mở firewall port 80/443 trên GCP.
+- **Không đụng bản Cloud Run cũ** (SQLite/vanilla) — đây là service hoàn toàn tách biệt, phục vụ mục đích test bản mới song song.
+
+### 15.5 Trạng thái
+Tất cả ở mục 15 này **CHƯA CODE** — mới dừng ở mức thống nhất phương án nghiệp vụ + kỹ thuật. Việc tiếp theo: thiết kế chi tiết schema (bảng ghi chú tiềm năng tách biệt), API, UI cho tab Giám sát (ô tìm mã thẻ + tick tiềm năng), UI lọc lucky draw ở Báo cáo, rồi mới triển khai GCE VM.
 
 ---
 

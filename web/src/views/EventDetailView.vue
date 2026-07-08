@@ -1,11 +1,18 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue';
 import { useRouter } from 'vue-router';
 import { api, auth, fmtDate, eventDayStatus } from '../api';
 import MButton from '../components/mds/MButton.vue';
 import MTabs from '../components/mds/MTabs.vue';
 import MTag from '../components/mds/MTag.vue';
 import MSpinner from '../components/mds/MSpinner.vue';
+
+// Các tab đã chuyển sang Vue (GĐ2). Tab chưa làm (GĐ3-4) sẽ hiện placeholder.
+const tabComponents = {
+  attendees: defineAsyncComponent(() => import('./tabs/AttendeesTab.vue')),
+  booths: defineAsyncComponent(() => import('./tabs/BoothsTab.vue')),
+  staff: defineAsyncComponent(() => import('./tabs/StaffTab.vue')),
+};
 
 const props = defineProps({ id: [String, Number], tab: String });
 const router = useRouter();
@@ -45,6 +52,8 @@ const activeTab = computed({
 });
 
 const dayLocked = computed(() => isCheckin.value && staffType.value !== 'manager' && ev.value && eventDayStatus(ev.value) !== 'today');
+
+const activeComponent = computed(() => tabComponents[activeTab.value] || null);
 
 async function load() {
   loading.value = true; err.value = '';
@@ -86,8 +95,11 @@ async function delEvent() {
 
     <template v-else>
       <MTabs v-model="activeTab" :tabs="tabs" variant="underline" />
-      <div class="card" style="margin-top:16px">
-        <p class="muted">Tab <b>{{ activeTab }}</b> đang được chuyển sang giao diện Vue mới (giai đoạn tiếp theo). Chức năng backend đã sẵn sàng trên MySQL.</p>
+      <div style="margin-top:16px">
+        <component v-if="activeComponent" :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />
+        <div v-else class="card">
+          <p class="muted">Tab <b>{{ activeTab }}</b> đang được chuyển sang giao diện Vue mới (giai đoạn tiếp theo). Chức năng backend đã sẵn sàng trên MySQL.</p>
+        </div>
       </div>
     </template>
   </template>

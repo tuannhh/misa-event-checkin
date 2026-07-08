@@ -135,15 +135,17 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
           <td>{{ r.email }}</td><td>{{ r.phone }}</td><td>{{ r.company }}</td>
           <td><MTag v-if="r.checked_in_at" color="success" size="sm">✓ {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
           <td style="white-space:nowrap">
-            <MTag :color="r.confirm_email_sent_at ? 'success' : 'neutral'" size="sm">{{ r.confirm_email_sent_at ? 'Đã gửi' : 'Chưa' }}</MTag>
-            <MButton v-if="canManage && r.email" variant="secondary" size="md" :disabled="!r.eligible" @click="sendOne(r)">{{ r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi' }}</MButton>
+            <span class="cell-actions">
+              <MTag :color="r.confirm_email_sent_at ? 'success' : 'neutral'" size="sm">{{ r.confirm_email_sent_at ? 'Đã gửi' : 'Chưa' }}</MTag>
+              <MButton v-if="canManage && r.email" variant="secondary" size="md" :disabled="!r.eligible" @click="sendOne(r)">{{ r.confirm_email_sent_at ? 'Gửi lại' : 'Gửi' }}</MButton>
+            </span>
           </td>
           <td style="white-space:nowrap;text-align:right">
-            <template v-if="canManage">
+            <span v-if="canManage" class="cell-actions" style="justify-content:flex-end">
               <MButton variant="secondary" size="md" @click="openEdit(r)">✏️</MButton>
               <MButton variant="secondary" size="md" @click="showQr(r)">QR</MButton>
               <MButton variant="danger" size="md" @click="del(r)">✕</MButton>
-            </template>
+            </span>
           </td>
         </tr>
         <tr v-if="!filtered.length"><td :colspan="canManage ? 9 : 8" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>

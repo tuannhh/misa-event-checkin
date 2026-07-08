@@ -104,8 +104,10 @@ async function save() {
             </td>
             <td>{{ r.checked_in_by_name || '' }}</td>
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
-              <MButton variant="secondary" size="md" @click="openEdit(r)">✏️</MButton>
-              <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r)">🖨</MButton>
+              <span class="cell-actions" style="justify-content:flex-end">
+                <MButton variant="secondary" size="md" @click="openEdit(r)">✏️</MButton>
+                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r)">🖨</MButton>
+              </span>
             </td>
           </tr>
           <tr v-if="!filtered.length"><td :colspan="canManage ? 10 : 9" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>

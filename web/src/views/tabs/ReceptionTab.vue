@@ -59,8 +59,10 @@ async function saveWalkin() {
           <td>{{ r.company }}</td><td>{{ r.position }}</td>
           <td><MTag v-if="r.checked_in_at" color="success" size="sm">✓ {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
           <td style="white-space:nowrap;text-align:right">
-            <MButton v-if="!r.checked_in_at" variant="primary" size="md" @click="checkin(r)">Check-in</MButton>
-            <MButton variant="secondary" size="md" @click="printQr(r)">🖨 In QR</MButton>
+            <span class="cell-actions" style="justify-content:flex-end">
+              <MButton v-if="!r.checked_in_at" variant="primary" size="md" @click="checkin(r)">Check-in</MButton>
+              <MButton variant="secondary" size="md" @click="printQr(r)">🖨 In QR</MButton>
+            </span>
           </td>
         </tr>
         <tr v-if="!filtered.length"><td colspan="5" class="muted" style="padding:20px;text-align:center">Không có khách phù hợp.</td></tr>

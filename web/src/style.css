@@ -13,6 +13,21 @@
   --app-bg: #f3f4f6;
   --app-text: #111827;
   --app-border: #e5e7eb;
+
+  /* Alias ngữ nghĩa mà bộ component MDS tham chiếu nhưng bộ token blue.css chưa định nghĩa.
+     Thiếu các biến này -> nền dropdown/input trong suốt (đè chữ), viền/màu chữ sai.
+     Map về token cụ thể đã có (kèm fallback màu). */
+  --mds-bg: #ffffff;                                             /* nền input, popover, dropdown (đục, che chữ dưới) */
+  --mds-bg-hover-soft: var(--mds-bg-neutral-neutral-light, #f2f2f4);
+  --mds-bg-disabled: var(--mds-bg-neutral-neutral-light, #f2f2f4);
+  --mds-border: var(--mds-stroke-neutral, #ced1d6);
+  --mds-text: var(--mds-text-primary-neutral, #10141b);
+  --mds-text-muted: var(--mds-text-secondary-neutral, #6b707a);
+  --mds-text-placeholder: var(--mds-text-hint-neutral, #9da2ac);
+  --mds-danger: var(--mds-text-danger, #f04438);
+  --mds-info: var(--mds-text-info, #1570ef);
+  --mds-success: var(--mds-text-success, #039855);
+  --mds-warning: var(--mds-text-warning, #dc6803);
 }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
@@ -36,3 +51,5 @@ a { color: var(--mds-brand-600, #245FDF); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 @media (max-width: 640px) { .row2 { grid-template-columns: 1fr; } }
 label.fld { display: block; font-weight: 600; margin: 12px 0 5px; font-size: 13px; }
+/* Nhóm nút thao tác trong ô bảng: luôn có khoảng cách đều nhau */
+.cell-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }

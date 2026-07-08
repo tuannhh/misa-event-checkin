@@ -310,6 +310,10 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - **Dockerfile:** `node:20-slim` + `ca-certificates` (Litestream/Go cần CA store riêng, thiếu → lỗi x509 âm thầm) + `python3 make g++` (better-sqlite3 cần compile lại trên Linux x86_64, khác ARM Mac).
 - **Local, Railway (cũ), Cloud Run là 3 database HOÀN TOÀN riêng biệt** — làm gì ở local không tự hiện ở cloud.
 
+### Bản deploy nội bộ (bàn giao dev MISA)
+- `Dockerfile.internal` + `docker-compose.internal.yml` + [DEPLOY-NOI-BO.md](DEPLOY-NOI-BO.md): chạy **không cần Google Cloud/Litestream**, SQLite lưu trong volume `/data`. Đã build + test trên Docker máy Mac (trang chủ 200, route badges 401 OK).
+- Khoảng cách với chuẩn stack MISA (Vue+Tailwind / Node hoặc .NET / MySQL): backend Node ✅ khớp; **frontend đang vanilla JS (chưa Vue)**; **DB đang SQLite (chưa MySQL)**. Nếu MISA yêu cầu MySQL tập trung → cần đợt chuyển tầng dữ liệu (`db.js` + query trong `routes/api.js`, `email.js`). Session hiện dùng MemoryStore (in-memory) → nếu chạy >1 instance cần chuyển sang store bền (Redis/MySQL).
+
 ---
 
 ## 8. Bẫy kỹ thuật cần nhớ (tổng hợp)

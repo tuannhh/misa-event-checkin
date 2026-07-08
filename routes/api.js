@@ -1,4 +1,4 @@
-// Toàn bộ API của hệ thống
+// Toàn bộ API của hệ thống (tầng dữ liệu MySQL - các thao tác DB đều bất đồng bộ, phải await)
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -7,10 +7,8 @@ const XLSX = require('xlsx');
 const QRCode = require('qrcode');
 const JSZip = require('jszip');
 const path = require('path');
-const fs = require('fs');
 const db = require('../db');
 const { sendConfirmEmail, getTransport, deliver, buildEmail, fillTemplate } = require('../email');
-const { UPLOAD_DIR } = require('../config');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -23,7 +21,6 @@ const COMPANY_SIZES = [
 const ROLES = ['super_admin', 'admin', 'checkin'];
 const SALUTATIONS = ['Anh', 'Chị', 'Ông', 'Bà'];
 const IMPORTANCES = ['Bình thường', 'VIP', 'VVIP', 'Speaker', 'Ban lãnh đạo', 'Ban Tổ chức'];
-// Các trường có thể dùng làm điều kiện đủ tham dự
 const ELIGIBILITY_FIELDS = {
   importance: { label: 'Mức độ quan trọng', options: IMPORTANCES },
   position: { label: 'Chức vụ', options: POSITIONS },
@@ -32,9 +29,9 @@ const ELIGIBILITY_FIELDS = {
 };
 
 // ============ HELPER: phân quyền ============
-function requireLogin(req, res, next) {
+async function requireLogin(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: 'Chưa đăng nhập' });
-  req.user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
+  req.user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
   if (!req.user) { req.session.destroy(() => {}); return res.status(401).json({ error: 'Tài khoản không tồn tại' }); }
   next();
 }
@@ -44,32 +41,30 @@ function requireRole(...roles) {
     next();
   };
 }
-// Sự kiện mà user được nhìn thấy
 function visibleEventsSql(user) {
   if (user.role === 'super_admin') return { where: '1=1', params: [] };
   if (user.role === 'admin') return { where: 'e.unit = ?', params: [user.unit] };
   return { where: 'e.id IN (SELECT event_id FROM event_staff WHERE user_id = ?)', params: [user.id] };
 }
-function canViewEvent(user, event) {
+async function canViewEvent(user, event) {
   if (user.role === 'super_admin') return true;
   if (user.role === 'admin') return event.unit === user.unit;
-  return !!db.prepare('SELECT 1 FROM event_staff WHERE event_id = ? AND user_id = ?').get(event.id, user.id);
+  return !!(await db.prepare('SELECT 1 AS ok FROM event_staff WHERE event_id = ? AND user_id = ?').get(event.id, user.id));
 }
 function canManageEvent(user, event) {
   if (user.role === 'super_admin') return true;
   if (user.role === 'admin') return event.unit === user.unit;
   return false;
 }
-function getEventOr404(req, res) {
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
+async function getEventOr404(req, res) {
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
   if (!ev) { res.status(404).json({ error: 'Không tìm thấy sự kiện' }); return null; }
-  if (!canViewEvent(req.user, ev)) { res.status(403).json({ error: 'Bạn không có quyền với sự kiện này' }); return null; }
+  if (!(await canViewEvent(req.user, ev))) { res.status(403).json({ error: 'Bạn không có quyền với sự kiện này' }); return null; }
   return ev;
 }
 function newToken() {
   return crypto.randomBytes(10).toString('hex').toUpperCase(); // chuỗi 20 ký tự ngẫu nhiên, vô nghĩa
 }
-// Xét 1 người có đủ điều kiện tham dự theo thiết lập của sự kiện không
 function isEligible(attendee, event) {
   if (!event.eligibility_field || !ELIGIBILITY_FIELDS[event.eligibility_field]) return true;
   let vals = [];
@@ -80,60 +75,51 @@ function isEligible(attendee, event) {
 function fmtVN(isoUtc) {
   return new Date(isoUtc + 'Z').toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
 }
-// Sự kiện có tổ chức đúng ngày hôm nay không (theo giờ Việt Nam) - dùng để khoá quét theo ngày
 function isEventToday(ev) {
   const todayVN = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
   return (ev.event_date || '').slice(0, 10) === todayVN;
 }
-function getEmailSettings(eventId) {
-  db.prepare('INSERT OR IGNORE INTO email_settings (event_id) VALUES (?)').run(eventId);
+async function getEmailSettings(eventId) {
+  await db.prepare('INSERT IGNORE INTO email_settings (event_id) VALUES (?)').run(eventId);
   return db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(eventId);
 }
 const STAFF_TYPES = ['checkin', 'reception', 'supervisor', 'manager'];
-// Vị trí chỉ được XEM (không quét/check-in/thêm khách)
 const VIEW_ONLY_TYPES = ['supervisor', 'manager'];
-// Lấy phân công của 1 nhân viên trong 1 sự kiện: { booth_id, staff_type } (hoặc null nếu chưa gán)
-function getAssignment(user, eventId) {
-  const row = db.prepare('SELECT booth_id, staff_type FROM event_staff WHERE event_id = ? AND user_id = ?').get(eventId, user.id);
+async function getAssignment(user, eventId) {
+  const row = await db.prepare('SELECT booth_id, staff_type FROM event_staff WHERE event_id = ? AND user_id = ?').get(eventId, user.id);
   if (!row) return null;
   return { booth_id: row.booth_id || null, staff_type: STAFF_TYPES.includes(row.staff_type) ? row.staff_type : 'checkin' };
 }
 
 // ============ PHÔI THẺ (badge) ============
-// Tìm phôi thẻ theo mã quét được. Mã QR trên phôi mã hoá "{eventId}-{code}"; nhập tay chỉ cần "{code}".
-// Trả về: bản ghi badge | 'wrong_event' | null
-function findBadge(eventId, token) {
+async function findBadge(eventId, token) {
   let code = token;
   const m = String(token).match(/^(\d+)-(.+)$/);
-  if (m) { if (Number(m[1]) !== eventId) return 'wrong_event'; code = m[2]; }
-  return db.prepare('SELECT * FROM badges WHERE event_id = ? AND code = ?').get(eventId, code) || null;
+  if (m) { if (Number(m[1]) !== Number(eventId)) return 'wrong_event'; code = m[2]; }
+  return (await db.prepare('SELECT * FROM badges WHERE event_id = ? AND code = ?').get(eventId, code)) || null;
 }
-// Tra khách từ mã quét được: ưu tiên mã QR của khách (qr_token), sau đó mới đến mã phôi thẻ đã gán
-function resolveAttendee(eventId, token) {
-  const a = db.prepare('SELECT * FROM attendees WHERE qr_token = ? AND event_id = ?').get(token, eventId);
+async function resolveAttendee(eventId, token) {
+  const a = await db.prepare('SELECT * FROM attendees WHERE qr_token = ? AND event_id = ?').get(token, eventId);
   if (a) return a;
-  const badge = findBadge(eventId, token);
+  const badge = await findBadge(eventId, token);
   if (badge && badge !== 'wrong_event' && badge.attendee_id) {
     return db.prepare('SELECT * FROM attendees WHERE id = ?').get(badge.attendee_id);
   }
   return null;
 }
-// Danh sách phôi thẻ đang gán cho 1 khách
-function badgesOfAttendee(attendeeId) {
+async function badgesOfAttendee(attendeeId) {
   return db.prepare('SELECT id, code, status FROM badges WHERE attendee_id = ? ORDER BY code').all(attendeeId);
 }
-// Quyền thao tác phôi thẻ tại quầy (gán/ngừng): lễ tân + nhân viên check-in (đúng ngày, không phải vị trí chỉ-xem) hoặc admin
-function badgeOpGuard(req, res, ev) {
+async function badgeOpGuard(req, res, ev) {
   if (req.user.role === 'checkin') {
     if (!isEventToday(ev)) { res.status(403).json({ error: 'Chỉ thao tác thẻ vào đúng ngày tổ chức sự kiện' }); return false; }
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không gán thẻ' }); return false; }
     return true;
   }
   if (!canManageEvent(req.user, ev)) { res.status(403).json({ error: 'Bạn không có quyền' }); return false; }
   return true;
 }
-// Dựng 1 phôi thẻ dạng SVG vuông: QR (mã hoá "{eventId}-{code}") ở trên, mã ID ở dưới
 async function buildBadgeSvg(eventId, code) {
   let qr = await QRCode.toString(`${eventId}-${code}`, { type: 'svg', margin: 0, width: 240 });
   qr = qr.replace('<svg ', '<svg x="30" y="26" ');
@@ -143,9 +129,9 @@ async function buildBadgeSvg(eventId, code) {
 }
 
 // ============ ĐĂNG NHẬP ============
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').trim());
+  const user = await db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').trim());
   if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
     return res.status(401).json({ error: 'Email hoặc mật khẩu không đúng' });
   }
@@ -159,12 +145,12 @@ router.get('/me', requireLogin, (req, res) => {
 });
 
 // ============ THÀNH VIÊN ============
-router.get('/users', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
+router.get('/users', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
   let rows;
   if (req.user.role === 'super_admin') {
-    rows = db.prepare('SELECT id, name, department, unit, email, role, created_at FROM users ORDER BY id').all();
+    rows = await db.prepare('SELECT id, name, department, unit, email, role, created_at FROM users ORDER BY id').all();
   } else {
-    rows = db.prepare("SELECT id, name, department, unit, email, role, created_at FROM users WHERE unit = ? AND role != 'super_admin' ORDER BY id").all(req.user.unit);
+    rows = await db.prepare("SELECT id, name, department, unit, email, role, created_at FROM users WHERE unit = ? AND role != 'super_admin' ORDER BY id").all(req.user.unit);
   }
   res.json(rows);
 });
@@ -178,21 +164,21 @@ function validateNewUserRole(actor, role, unit) {
   return null;
 }
 
-router.post('/users', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
+router.post('/users', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
   const { name, department, unit, email, role, password } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Cần nhập Họ tên, Email và Mật khẩu' });
   const err = validateNewUserRole(req.user, role, unit || '');
   if (err) return res.status(403).json({ error: err });
-  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email.trim())) {
+  if (await db.prepare('SELECT 1 AS ok FROM users WHERE email = ?').get(email.trim())) {
     return res.status(409).json({ error: 'Email này đã tồn tại trong hệ thống' });
   }
-  const info = db.prepare('INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,?)')
+  const info = await db.prepare('INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,?)')
     .run(name.trim(), department || '', unit || '', email.trim(), bcrypt.hashSync(password, 10), role);
   res.json({ id: info.lastInsertRowid });
 });
 
-router.put('/users/:id', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.put('/users/:id', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'Không tìm thấy thành viên' });
   if (req.user.role === 'admin' && (target.unit !== req.user.unit || target.role === 'super_admin' || target.role === 'admin')) {
     return res.status(403).json({ error: 'Bạn không có quyền sửa thành viên này' });
@@ -202,24 +188,23 @@ router.put('/users/:id', requireLogin, requireRole('super_admin', 'admin'), (req
     const err = validateNewUserRole(req.user, role, unit !== undefined ? unit : target.unit);
     if (err && target.role !== role) return res.status(403).json({ error: err });
   }
-  db.prepare('UPDATE users SET name=?, department=?, unit=?, email=?, role=? WHERE id=?')
+  await db.prepare('UPDATE users SET name=?, department=?, unit=?, email=?, role=? WHERE id=?')
     .run(name ?? target.name, department ?? target.department, unit ?? target.unit, email ?? target.email, role ?? target.role, target.id);
-  if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password, 10), target.id);
+  if (password) await db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password, 10), target.id);
   res.json({ ok: true });
 });
 
-router.delete('/users/:id', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.delete('/users/:id', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!target) return res.status(404).json({ error: 'Không tìm thấy thành viên' });
   if (target.role === 'super_admin') return res.status(403).json({ error: 'Không thể xoá Super Admin' });
   if (req.user.role === 'admin' && (target.unit !== req.user.unit || target.role === 'admin')) {
     return res.status(403).json({ error: 'Bạn không có quyền xoá thành viên này' });
   }
-  db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  await db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
   res.json({ ok: true });
 });
 
-// File Excel mẫu cho danh sách thành viên
 router.get('/users/template', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
   const ws = XLSX.utils.aoa_to_sheet([
     ['Họ và tên', 'Bộ phận', 'Đơn vị', 'Email', 'Vai trò', 'Mật khẩu'],
@@ -234,7 +219,7 @@ router.get('/users/template', requireLogin, requireRole('super_admin', 'admin'),
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
 });
 
-router.post('/users/import', requireLogin, requireRole('super_admin', 'admin'), upload.single('file'), (req, res) => {
+router.post('/users/import', requireLogin, requireRole('super_admin', 'admin'), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
   const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
@@ -245,13 +230,13 @@ router.post('/users/import', requireLogin, requireRole('super_admin', 'admin'), 
     const role = String(r['Vai trò'] || '').trim().toLowerCase();
     const password = String(r['Mật khẩu'] || '').trim();
     const unit = String(r['Đơn vị'] || '').trim();
-    if (!name && !email) continue; // dòng trống / ghi chú
+    if (!name && !email) continue;
     if (!name || !email || !password) { errors.push(`Dòng ${i + 2}: thiếu Họ tên, Email hoặc Mật khẩu`); continue; }
     if (!ROLES.includes(role) || role === 'super_admin') { errors.push(`Dòng ${i + 2}: vai trò "${role}" không hợp lệ`); continue; }
     const err = validateNewUserRole(req.user, role, req.user.role === 'admin' ? req.user.unit : unit);
     if (err) { errors.push(`Dòng ${i + 2}: ${err}`); continue; }
-    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) { errors.push(`Dòng ${i + 2}: email ${email} đã tồn tại`); continue; }
-    db.prepare('INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,?)')
+    if (await db.prepare('SELECT 1 AS ok FROM users WHERE email = ?').get(email)) { errors.push(`Dòng ${i + 2}: email ${email} đã tồn tại`); continue; }
+    await db.prepare('INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,?)')
       .run(name, String(r['Bộ phận'] || '').trim(), req.user.role === 'admin' ? req.user.unit : unit, email, bcrypt.hashSync(password, 10), role);
     added++;
   }
@@ -259,17 +244,16 @@ router.post('/users/import', requireLogin, requireRole('super_admin', 'admin'), 
 });
 
 // ============ SỰ KIỆN ============
-router.get('/events', requireLogin, (req, res) => {
+router.get('/events', requireLogin, async (req, res) => {
   const v = visibleEventsSql(req.user);
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT e.*, u.name AS creator_name,
       (SELECT COUNT(*) FROM attendees a WHERE a.event_id = e.id) AS total_attendees,
       (SELECT COUNT(*) FROM attendees a WHERE a.event_id = e.id AND a.checked_in_at IS NOT NULL) AS total_checkedin
     FROM events e JOIN users u ON u.id = e.created_by
     WHERE ${v.where} ORDER BY e.event_date DESC`).all(...v.params);
-  // Nhân viên: đính kèm loại vị trí (để danh sách sự kiện mở đúng màn hình khi vào)
   if (req.user.role === 'checkin') {
-    const asg = db.prepare('SELECT event_id, staff_type FROM event_staff WHERE user_id = ?').all(req.user.id);
+    const asg = await db.prepare('SELECT event_id, staff_type FROM event_staff WHERE user_id = ?').all(req.user.id);
     const m = new Map(asg.map(a => [a.event_id, STAFF_TYPES.includes(a.staff_type) ? a.staff_type : 'checkin']));
     rows.forEach(r => { r.my_staff_type = m.get(r.id) || 'checkin'; });
   }
@@ -282,125 +266,121 @@ function eligibilityJson(field, values) {
   return [field, JSON.stringify(valid)];
 }
 
-router.post('/events', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
+router.post('/events', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
   const { name, event_date, organizer, unit, eligibility_field, eligibility_values } = req.body;
   if (!name || !event_date) return res.status(400).json({ error: 'Cần nhập Tên sự kiện và Thời gian tổ chức' });
   const evUnit = req.user.role === 'super_admin' ? (unit || '') : req.user.unit;
   const [ef, evs] = eligibilityJson(eligibility_field, eligibility_values);
-  const info = db.prepare('INSERT INTO events (name, event_date, organizer, unit, created_by, eligibility_field, eligibility_values) VALUES (?,?,?,?,?,?,?)')
+  const info = await db.prepare('INSERT INTO events (name, event_date, organizer, unit, created_by, eligibility_field, eligibility_values) VALUES (?,?,?,?,?,?,?)')
     .run(name.trim(), event_date, organizer || '', evUnit, req.user.id, ef, evs);
-  getEmailSettings(info.lastInsertRowid);
+  await getEmailSettings(info.lastInsertRowid);
   res.json({ id: info.lastInsertRowid });
 });
 
-router.get('/events/:id', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  const staff = db.prepare(`SELECT u.id, u.name, u.email, s.booth_id, s.staff_type FROM event_staff s JOIN users u ON u.id = s.user_id WHERE s.event_id = ?`).all(ev.id)
+router.get('/events/:id', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const staff = (await db.prepare(`SELECT u.id, u.name, u.email, s.booth_id, s.staff_type FROM event_staff s JOIN users u ON u.id = s.user_id WHERE s.event_id = ?`).all(ev.id))
     .map(s => ({ ...s, staff_type: STAFF_TYPES.includes(s.staff_type) ? s.staff_type : 'checkin' }));
-  const booths = db.prepare('SELECT * FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
-  // Vị trí được gán của nhân viên đang đăng nhập (để mở đúng màn hình + khoá đúng chỗ)
+  const booths = await db.prepare('SELECT * FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
   let my_position;
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     const boothId = mine ? mine.booth_id : null;
     const b = boothId ? booths.find(x => x.id === boothId) : null;
     my_position = { booth_id: b ? b.id : null, name: b ? b.name : 'Cổng check-in', staff_type: mine ? mine.staff_type : 'checkin' };
   }
-  const badge_count = db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id).c;
+  const badge_count = (await db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id)).c;
   res.json({ ...ev, staff, booths, my_position, badge_count, can_manage: canManageEvent(req.user, ev) });
 });
 
-router.put('/events/:id', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.put('/events/:id', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền sửa sự kiện này' });
   const { name, event_date, organizer, unit, eligibility_field, eligibility_values } = req.body;
   const evUnit = req.user.role === 'super_admin' ? (unit ?? ev.unit) : ev.unit;
   const [ef, evs] = eligibility_field !== undefined
     ? eligibilityJson(eligibility_field, eligibility_values)
     : [ev.eligibility_field, ev.eligibility_values];
-  db.prepare('UPDATE events SET name=?, event_date=?, organizer=?, unit=?, eligibility_field=?, eligibility_values=? WHERE id=?')
+  await db.prepare('UPDATE events SET name=?, event_date=?, organizer=?, unit=?, eligibility_field=?, eligibility_values=? WHERE id=?')
     .run(name ?? ev.name, event_date ?? ev.event_date, organizer ?? ev.organizer, evUnit, ef, evs, ev.id);
   res.json({ ok: true });
 });
 
-// ============ BOOTH (hành trình quét QR) ============
-router.post('/events/:id/booths', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+// ============ BOOTH ============
+router.post('/events/:id/booths', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Cần nhập tên booth' });
-  const max = db.prepare('SELECT COALESCE(MAX(sort),0) AS m FROM booths WHERE event_id = ?').get(ev.id).m;
-  const info = db.prepare('INSERT INTO booths (event_id, name, sort) VALUES (?,?,?)').run(ev.id, name, max + 1);
+  const max = (await db.prepare('SELECT COALESCE(MAX(sort),0) AS m FROM booths WHERE event_id = ?').get(ev.id)).m;
+  const info = await db.prepare('INSERT INTO booths (event_id, name, sort) VALUES (?,?,?)').run(ev.id, name, max + 1);
   res.json({ id: info.lastInsertRowid });
 });
-router.put('/booths/:id', requireLogin, (req, res) => {
-  const b = db.prepare('SELECT * FROM booths WHERE id = ?').get(req.params.id);
+router.put('/booths/:id', requireLogin, async (req, res) => {
+  const b = await db.prepare('SELECT * FROM booths WHERE id = ?').get(req.params.id);
   if (!b) return res.status(404).json({ error: 'Không tìm thấy booth' });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(b.event_id);
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(b.event_id);
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Cần nhập tên booth' });
-  db.prepare('UPDATE booths SET name = ? WHERE id = ?').run(name, b.id);
+  await db.prepare('UPDATE booths SET name = ? WHERE id = ?').run(name, b.id);
   res.json({ ok: true });
 });
-router.delete('/booths/:id', requireLogin, (req, res) => {
-  const b = db.prepare('SELECT * FROM booths WHERE id = ?').get(req.params.id);
+router.delete('/booths/:id', requireLogin, async (req, res) => {
+  const b = await db.prepare('SELECT * FROM booths WHERE id = ?').get(req.params.id);
   if (!b) return res.status(404).json({ error: 'Không tìm thấy booth' });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(b.event_id);
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(b.event_id);
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  db.prepare('UPDATE event_staff SET booth_id = NULL WHERE booth_id = ?').run(b.id); // NV đang đứng booth này -> chuyển về cổng
-  db.prepare('DELETE FROM booths WHERE id = ?').run(b.id);
+  await db.prepare('UPDATE event_staff SET booth_id = NULL WHERE booth_id = ?').run(b.id);
+  await db.prepare('DELETE FROM booths WHERE id = ?').run(b.id);
   res.json({ ok: true });
 });
 
-router.delete('/events/:id', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.delete('/events/:id', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền xoá sự kiện này' });
-  db.prepare('DELETE FROM events WHERE id = ?').run(ev.id);
+  await db.prepare('DELETE FROM events WHERE id = ?').run(ev.id);
   res.json({ ok: true });
 });
 
 // Gán nhân viên check-in cho sự kiện
-router.put('/events/:id/staff', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.put('/events/:id/staff', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  // Hỗ trợ cả định dạng mới (assignments: [{user_id, booth_id}]) lẫn cũ (user_ids)
   let assignments = Array.isArray(req.body.assignments) ? req.body.assignments : null;
   if (!assignments) {
     const ids = Array.isArray(req.body.user_ids) ? req.body.user_ids : [];
     assignments = ids.map(id => ({ user_id: id, booth_id: null }));
   }
-  const validBooths = new Set(db.prepare('SELECT id FROM booths WHERE event_id = ?').all(ev.id).map(b => b.id));
-  db.prepare('DELETE FROM event_staff WHERE event_id = ?').run(ev.id);
-  const ins = db.prepare('INSERT OR IGNORE INTO event_staff (event_id, user_id, booth_id, staff_type) VALUES (?,?,?,?)');
+  const validBooths = new Set((await db.prepare('SELECT id FROM booths WHERE event_id = ?').all(ev.id)).map(b => b.id));
+  await db.prepare('DELETE FROM event_staff WHERE event_id = ?').run(ev.id);
+  const ins = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id, staff_type) VALUES (?,?,?,?)');
   for (const a of assignments) {
     const type = STAFF_TYPES.includes(a.staff_type) ? a.staff_type : 'checkin';
     let bid = a.booth_id && validBooths.has(Number(a.booth_id)) ? Number(a.booth_id) : null;
-    if (type === 'reception' || type === 'manager') bid = null;   // lễ tân đứng ở cổng; quản lý xem toàn sự kiện (không gán booth)
-    ins.run(ev.id, a.user_id, bid, type);
+    if (type === 'reception' || type === 'manager') bid = null;
+    await ins.run(ev.id, a.user_id, bid, type);
   }
   res.json({ ok: true });
 });
 
-// Tạo nhanh tài khoản nhân viên check-in ngay trong sự kiện và gán luôn
-router.post('/events/:id/staff/create', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/staff/create', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const { name, email, password, department } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Cần nhập Họ tên, Email và Mật khẩu' });
-  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email.trim())) {
+  if (await db.prepare('SELECT 1 AS ok FROM users WHERE email = ?').get(email.trim())) {
     return res.status(409).json({ error: 'Email này đã tồn tại trong hệ thống' });
   }
   const unit = req.user.role === 'admin' ? req.user.unit : (ev.unit || '');
-  const info = db.prepare("INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,'checkin')")
+  const info = await db.prepare("INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,'checkin')")
     .run(name.trim(), department || '', unit, email.trim(), bcrypt.hashSync(password, 10));
-  db.prepare('INSERT OR IGNORE INTO event_staff (event_id, user_id) VALUES (?,?)').run(ev.id, info.lastInsertRowid);
+  await db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id) VALUES (?,?)').run(ev.id, info.lastInsertRowid);
   res.json({ id: info.lastInsertRowid });
 });
 
-// File Excel mẫu cho danh sách nhân viên check-in (các trường giống nhập tay)
-router.get('/events/:id/staff/template', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.get('/events/:id/staff/template', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   const ws = XLSX.utils.aoa_to_sheet([
     ['Họ và tên', 'Bộ phận', 'Email đăng nhập', 'Mật khẩu'],
     ['Nguyễn Văn A', 'Lễ tân', 'le.tan@congty.com', 'MatKhau123'],
@@ -414,9 +394,8 @@ router.get('/events/:id/staff/template', requireLogin, requireRole('super_admin'
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
 });
 
-// Import danh sách nhân viên check-in từ Excel và gán luôn vào sự kiện
-router.post('/events/:id/staff/import', requireLogin, requireRole('super_admin', 'admin'), upload.single('file'), (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/staff/import', requireLogin, requireRole('super_admin', 'admin'), upload.single('file'), async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
   const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -424,82 +403,78 @@ router.post('/events/:id/staff/import', requireLogin, requireRole('super_admin',
   const unit = req.user.role === 'admin' ? req.user.unit : (ev.unit || '');
   let added = 0, assigned = 0; const errors = [];
   const insUser = db.prepare("INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,'checkin')");
-  const insStaff = db.prepare('INSERT OR IGNORE INTO event_staff (event_id, user_id, booth_id) VALUES (?,?,NULL)');
+  const insStaff = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id) VALUES (?,?,NULL)');
   for (const [i, r] of rows.entries()) {
     const name = String(r['Họ và tên'] || '').trim();
     const email = String(r['Email đăng nhập'] || r['Email'] || '').trim();
     const password = String(r['Mật khẩu'] || '').trim();
     const dept = String(r['Bộ phận'] || '').trim();
-    if (!name && !email) continue; // dòng trống / ghi chú
-    const exist = db.prepare('SELECT id, role FROM users WHERE email = ?').get(email);
+    if (!name && !email) continue;
+    const exist = await db.prepare('SELECT id, role FROM users WHERE email = ?').get(email);
     if (exist) {
-      if (exist.role === 'checkin') { insStaff.run(ev.id, exist.id); assigned++; }
+      if (exist.role === 'checkin') { await insStaff.run(ev.id, exist.id); assigned++; }
       else errors.push(`Dòng ${i + 2}: email ${email} đang dùng cho vai trò khác - bỏ qua`);
       continue;
     }
     if (!name || !email || !password) { errors.push(`Dòng ${i + 2}: thiếu Họ tên, Email hoặc Mật khẩu`); continue; }
-    const info = insUser.run(name, dept, unit, email, bcrypt.hashSync(password, 10));
-    insStaff.run(ev.id, info.lastInsertRowid);
+    const info = await insUser.run(name, dept, unit, email, bcrypt.hashSync(password, 10));
+    await insStaff.run(ev.id, info.lastInsertRowid);
     added++;
   }
   res.json({ added, assigned, errors });
 });
 
-// Danh sách nhân viên check-in có thể gán (cùng đơn vị)
-router.get('/events/:id/available-staff', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.get('/events/:id/available-staff', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   let rows;
   if (req.user.role === 'super_admin') {
-    rows = db.prepare("SELECT id, name, email, unit FROM users WHERE role = 'checkin' ORDER BY name").all();
+    rows = await db.prepare("SELECT id, name, email, unit FROM users WHERE role = 'checkin' ORDER BY name").all();
   } else {
-    rows = db.prepare("SELECT id, name, email, unit FROM users WHERE role = 'checkin' AND unit = ? ORDER BY name").all(req.user.unit);
+    rows = await db.prepare("SELECT id, name, email, unit FROM users WHERE role = 'checkin' AND unit = ? ORDER BY name").all(req.user.unit);
   }
   res.json(rows);
 });
 
 // ============ NGƯỜI THAM DỰ ============
-router.get('/events/:id/attendees', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  let rows = db.prepare(`
+router.get('/events/:id/attendees', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  let rows = await db.prepare(`
     SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by
     WHERE a.event_id = ? ORDER BY a.id DESC`).all(ev.id);
   if (req.user.role === 'checkin') {
-    const asg = getAssignment(req.user, ev.id);
+    const asg = await getAssignment(req.user, ev.id);
     const type = asg ? asg.staff_type : 'checkin';
     if (type === 'reception') {
-      // Lễ tân in QR: xem TOÀN BỘ khách (đã đăng ký trước + vãng lai) để tra cứu & in tem QR
+      // Lễ tân in QR: xem TOÀN BỘ khách
     } else if (type === 'supervisor' || type === 'manager') {
-      rows = []; // Giám sát / Quản lý dùng màn hình riêng, không xem danh sách này
+      rows = [];
     } else if (req.query.all !== '1') {
-      // Nhân viên check-in chỉ xem danh sách người ĐÃ check-in
       rows = rows.filter(r => r.checked_in_at);
     }
   } else {
-    // Mục 4: khách vãng lai KHÔNG nằm trong danh sách đăng ký (chỉ xuất hiện ở Báo cáo)
     rows = rows.filter(r => !r.is_walkin);
   }
   res.json(rows.map(r => ({ ...r, eligible: isEligible(r, ev) })));
 });
 
-router.post('/events/:id/attendees', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/attendees', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền thêm người tham dự' });
   const { name, email, phone, position, company, tax_code, company_size, salutation, importance, force } = req.body;
   if (!name) return res.status(400).json({ error: 'Cần nhập Họ và tên' });
   if (phone) {
-    const dup = db.prepare('SELECT name, phone FROM attendees WHERE event_id = ? AND phone = ?').get(ev.id, String(phone).trim());
+    const dup = await db.prepare('SELECT name, phone FROM attendees WHERE event_id = ? AND phone = ?').get(ev.id, String(phone).trim());
     if (dup && !force) {
       return res.status(409).json({ duplicate: true, error: `Số điện thoại ${dup.phone} đã có trong danh sách (${dup.name}). Bạn có chắc muốn thêm?` });
     }
   }
-  const info = db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
+  const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run(ev.id, name.trim(), (email || '').trim(), String(phone || '').trim(), position || '', company || '', tax_code || '', company_size || '',
       salutation || '', importance || 'Bình thường', newToken());
-  const attendee = db.prepare('SELECT * FROM attendees WHERE id = ?').get(info.lastInsertRowid);
-  // Tự động gửi email xác nhận nếu đã bật (bỏ qua người không đủ điều kiện)
-  const settings = getEmailSettings(ev.id);
+  const attendee = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(info.lastInsertRowid);
+  const settings = await getEmailSettings(ev.id);
   let emailResult = null;
   if (settings.auto_send_confirm && attendee.email && isEligible(attendee, ev)) {
     sendConfirmEmail(attendee, ev, settings).then(() => {}).catch(e => console.error('Lỗi gửi email:', e.message));
@@ -508,37 +483,35 @@ router.post('/events/:id/attendees', requireLogin, (req, res) => {
   res.json({ id: attendee.id, email: emailResult });
 });
 
-// Sửa thông tin người tham dự
-router.put('/attendees/:id', requireLogin, (req, res) => {
-  const a = db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
+router.put('/attendees/:id', requireLogin, async (req, res) => {
+  const a = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy người tham dự' });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền sửa' });
   const b = req.body;
   if (b.name !== undefined && !String(b.name).trim()) return res.status(400).json({ error: 'Họ và tên không được để trống' });
   const newPhone = b.phone !== undefined ? String(b.phone).trim() : a.phone;
   if (newPhone && newPhone !== a.phone) {
-    const dup = db.prepare('SELECT name, phone FROM attendees WHERE event_id = ? AND phone = ? AND id != ?').get(ev.id, newPhone, a.id);
+    const dup = await db.prepare('SELECT name, phone FROM attendees WHERE event_id = ? AND phone = ? AND id != ?').get(ev.id, newPhone, a.id);
     if (dup && !b.force) {
       return res.status(409).json({ duplicate: true, error: `Số điện thoại ${dup.phone} đã có trong danh sách (${dup.name}). Vẫn lưu?` });
     }
   }
-  db.prepare(`UPDATE attendees SET name=?, email=?, phone=?, position=?, company=?, tax_code=?, company_size=?, salutation=?, importance=? WHERE id=?`)
+  await db.prepare(`UPDATE attendees SET name=?, email=?, phone=?, position=?, company=?, tax_code=?, company_size=?, salutation=?, importance=? WHERE id=?`)
     .run((b.name ?? a.name).trim(), (b.email ?? a.email).trim(), newPhone, b.position ?? a.position, b.company ?? a.company,
       b.tax_code ?? a.tax_code, b.company_size ?? a.company_size, b.salutation ?? a.salutation, b.importance ?? a.importance, a.id);
   res.json({ ok: true });
 });
 
-router.delete('/attendees/:id', requireLogin, (req, res) => {
-  const a = db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
+router.delete('/attendees/:id', requireLogin, async (req, res) => {
+  const a = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy' });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  db.prepare('DELETE FROM attendees WHERE id = ?').run(a.id);
+  await db.prepare('DELETE FROM attendees WHERE id = ?').run(a.id);
   res.json({ ok: true });
 });
 
-// File Excel mẫu cho danh sách người tham dự
 router.get('/attendees/template', requireLogin, (req, res) => {
   const ws = XLSX.utils.aoa_to_sheet([
     ['Xưng hô', 'Họ và tên', 'Email', 'Số điện thoại', 'Chức vụ', 'Mức độ quan trọng', 'Nơi công tác/Tên công ty', 'MST công ty', 'Quy mô nhân sự'],
@@ -557,8 +530,8 @@ router.get('/attendees/template', requireLogin, (req, res) => {
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
 });
 
-router.post('/events/:id/attendees/import', requireLogin, upload.single('file'), (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/attendees/import', requireLogin, upload.single('file'), async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
   const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -568,12 +541,12 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
     const name = String(r['Họ và tên'] || '').trim();
     if (!name) continue;
     const phone = String(r['Số điện thoại'] || '').trim();
-    if (phone && db.prepare('SELECT 1 FROM attendees WHERE event_id = ? AND phone = ?').get(ev.id, phone)) {
+    if (phone && await db.prepare('SELECT 1 AS ok FROM attendees WHERE event_id = ? AND phone = ?').get(ev.id, phone)) {
       errors.push(`Dòng ${i + 2}: số điện thoại ${phone} (${name}) đã có trong danh sách - bỏ qua`);
       continue;
     }
     const imp = String(r['Mức độ quan trọng'] || '').trim();
-    const info = db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
+    const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
       .run(ev.id, name, String(r['Email'] || '').trim(), phone, String(r['Chức vụ'] || '').trim(),
         String(r['Nơi công tác/Tên công ty'] || r['Nơi công tác'] || r['Tên công ty'] || '').trim(),
@@ -582,12 +555,12 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
     newIds.push(info.lastInsertRowid);
     added++;
   }
-  // Tự động gửi email xác nhận nếu đã bật (bỏ qua người không đủ điều kiện)
-  const settings = getEmailSettings(ev.id);
-  if (settings.auto_send_confirm && getTransport()) {
+  const settings = await getEmailSettings(ev.id);
+  const transportOn = !!(settings.auto_send_confirm && (await getTransport()));
+  if (transportOn) {
     (async () => {
       for (const id of newIds) {
-        const a = db.prepare('SELECT * FROM attendees WHERE id = ?').get(id);
+        const a = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(id);
         if (a && a.email && isEligible(a, ev)) {
           try { await sendConfirmEmail(a, ev, settings); }
           catch (e) { console.error('Lỗi gửi email cho', a.email, e.message); }
@@ -595,70 +568,67 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
       }
     })();
   }
-  res.json({ added, errors, auto_email: !!(settings.auto_send_confirm && getTransport()) });
+  res.json({ added, errors, auto_email: transportOn });
 });
 
-// Ảnh QR công khai theo mã token (dùng trong email gửi qua Brevo - ai có token tức là chủ của mã QR đó)
+// Ảnh QR công khai theo mã token
 router.get('/qr/:token.png', async (req, res) => {
-  const a = db.prepare('SELECT qr_token FROM attendees WHERE qr_token = ?').get(req.params.token);
+  const a = await db.prepare('SELECT qr_token FROM attendees WHERE qr_token = ?').get(req.params.token);
   if (!a) return res.status(404).end();
   const png = await QRCode.toBuffer(a.qr_token, { width: 300, margin: 2 });
   res.type('png').send(png);
 });
 
-// Xem ảnh QR của 1 người (cho quản trị viên kiểm tra)
 router.get('/attendees/:id/qr.png', requireLogin, async (req, res) => {
-  if (req.params.id === '0') { // ảnh QR mẫu cho phần xem trước email
+  if (req.params.id === '0') {
     const png = await QRCode.toBuffer('MA-QR-MAU-XEM-TRUOC', { width: 300, margin: 2 });
     return res.type('png').send(png);
   }
-  const a = db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
+  const a = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).end();
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
-  if (!canViewEvent(req.user, ev)) return res.status(403).end();
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
+  if (!(await canViewEvent(req.user, ev))) return res.status(403).end();
   const png = await QRCode.toBuffer(a.qr_token, { width: 300, margin: 2 });
   res.type('png').send(png);
 });
 
 // Gửi (lại) email xác nhận cho 1 người
 router.post('/attendees/:id/send-email', requireLogin, async (req, res) => {
-  const a = db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
+  const a = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy' });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
+  const ev = await db.prepare('SELECT * FROM events WHERE id = ?').get(a.event_id);
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   if (!isEligible(a, ev)) return res.status(403).json({ error: 'Người này KHÔNG đủ điều kiện tham dự (theo thiết lập của sự kiện) nên không thể gửi email' });
   try {
-    await sendConfirmEmail(a, ev, getEmailSettings(ev.id));
+    await sendConfirmEmail(a, ev, await getEmailSettings(ev.id));
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// Gửi email cho DANH SÁCH người được chọn (tick nhiều người trong giao diện)
 router.post('/events/:id/send-emails', requireLogin, async (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  if (!getTransport()) return res.status(400).json({ error: 'Chưa cấu hình gửi email (vào mục Cấu hình Email)' });
+  if (!(await getTransport())) return res.status(400).json({ error: 'Chưa cấu hình gửi email (vào mục Cấu hình Email)' });
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
   if (!ids.length) return res.status(400).json({ error: 'Chưa chọn người nào' });
-  const settings = getEmailSettings(ev.id);
+  const settings = await getEmailSettings(ev.id);
   let sent = 0, skipped = 0; const errors = [];
   for (const id of ids) {
-    const a = db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(id, ev.id);
+    const a = await db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(id, ev.id);
     if (!a || !a.email) { skipped++; continue; }
-    if (!isEligible(a, ev)) { skipped++; continue; } // bỏ qua người không đủ điều kiện
+    if (!isEligible(a, ev)) { skipped++; continue; }
     try { await sendConfirmEmail(a, ev, settings); sent++; }
     catch (e) { errors.push(`${a.email}: ${e.message}`); }
   }
   res.json({ sent, skipped, errors });
 });
 
-// Gửi email xác nhận cho TẤT CẢ người chưa được gửi
 router.post('/events/:id/send-all-emails', requireLogin, async (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  if (!getTransport()) return res.status(400).json({ error: 'Chưa cấu hình SMTP (vào mục Cài đặt Email)' });
-  const settings = getEmailSettings(ev.id);
-  const all = db.prepare("SELECT * FROM attendees WHERE event_id = ? AND confirm_email_sent_at IS NULL AND email != ''").all(ev.id);
+  if (!(await getTransport())) return res.status(400).json({ error: 'Chưa cấu hình SMTP (vào mục Cài đặt Email)' });
+  const settings = await getEmailSettings(ev.id);
+  const all = await db.prepare("SELECT * FROM attendees WHERE event_id = ? AND confirm_email_sent_at IS NULL AND email != ''").all(ev.id);
   const pending = all.filter(a => isEligible(a, ev));
   const skipped = all.length - pending.length;
   let sent = 0; const errors = [];
@@ -670,75 +640,68 @@ router.post('/events/:id/send-all-emails', requireLogin, async (req, res) => {
 });
 
 // ============ CHECK-IN (QUÉT QR) ============
-router.post('/events/:id/scan', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  // Mục 3: nhân viên check-in chỉ được quét vào đúng ngày tổ chức (chặn sớm, bất kể mã nào)
+router.post('/events/:id/scan', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (req.user.role === 'checkin' && !isEventToday(ev)) {
     return res.status(403).json({ error: 'Chỉ được quét vào đúng ngày tổ chức sự kiện' });
   }
-  // Vị trí chỉ-xem (Giám sát / Quản lý) không có quyền quét mã (chặn sớm, trước cả khi tra mã)
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
   }
   const token = String(req.body.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
 
-  let a = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+  let a = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.qr_token = ?`).get(token);
 
-  // Nếu không phải mã QR của khách, thử xem có phải mã phôi thẻ in sẵn không
   if (!a) {
-    const badge = findBadge(ev.id, token);
+    const badge = await findBadge(ev.id, token);
     if (badge === 'wrong_event') return res.json({ status: 'wrong_event', message: 'Thẻ này thuộc sự kiện khác' });
     if (badge) {
       if (badge.status === 'stopped') return res.json({ status: 'badge_stopped', message: `Thẻ số ${badge.code} đã bị NGỪNG sử dụng (không hợp lệ)` });
       if (!badge.attendee_id) return res.json({ status: 'badge_unassigned', message: `Thẻ số ${badge.code} chưa được gán cho khách nào. Hãy gán thẻ tại quầy trước.` });
-      a = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+      a = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
         LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.id = ?`).get(badge.attendee_id);
     }
   }
 
   if (!a) return res.json({ status: 'invalid', message: 'Mã QR không hợp lệ - không có trong hệ thống' });
   if (a.event_id !== ev.id) {
-    const other = db.prepare('SELECT name FROM events WHERE id = ?').get(a.event_id);
+    const other = await db.prepare('SELECT name FROM events WHERE id = ?').get(a.event_id);
     return res.json({ status: 'wrong_event', message: `Mã này thuộc sự kiện khác: ${other ? other.name : '?'}`, attendee: a });
   }
-  // Hết hạn sau ngày tổ chức sự kiện
   const evDay = new Date(ev.event_date); evDay.setHours(23, 59, 59, 999);
   if (Date.now() > evDay.getTime() && !a.checked_in_at) {
     return res.json({ status: 'expired', message: 'Mã QR đã hết hạn (sự kiện đã kết thúc)', attendee: a });
   }
 
-  // Nhân viên check-in bị KHOÁ đúng vị trí được gán; quản lý (admin/super_admin) quét tự do
   let boothId = req.body.booth_id ? Number(req.body.booth_id) : null;
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
     if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
-    boothId = mine.booth_id || null; // luôn dùng vị trí được gán (lễ tân = cổng)
+    boothId = mine.booth_id || null;
   }
 
-  // ----- Quét tại BOOTH: ghi nhận hành trình tham quan -----
+  // ----- Quét tại BOOTH -----
   if (boothId) {
-    const booth = db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id);
+    const booth = await db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id);
     if (!booth) return res.status(400).json({ error: 'Booth không tồn tại trong sự kiện này' });
-    // Khách được quét ở booth nghĩa là đã có mặt tại sự kiện -> ghi nhận check-in nếu chưa có
     let justCheckedIn = false;
     if (!a.checked_in_at) {
-      db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+      await db.prepare('UPDATE attendees SET checked_in_at = UTC_TIMESTAMP(), checked_in_by = ? WHERE id = ?').run(req.user.id, a.id);
       justCheckedIn = true;
     }
-    const existed = db.prepare('SELECT * FROM booth_visits WHERE booth_id = ? AND attendee_id = ?').get(booth.id, a.id);
+    const existed = await db.prepare('SELECT * FROM booth_visits WHERE booth_id = ? AND attendee_id = ?').get(booth.id, a.id);
     if (existed) {
       return res.json({ status: 'booth_already', message: `${a.name} đã ghé booth "${booth.name}" lúc ${fmtVN(existed.visited_at)}`, attendee: a, booth: booth.name });
     }
-    db.prepare('INSERT INTO booth_visits (event_id, booth_id, attendee_id, visited_by) VALUES (?,?,?,?)').run(ev.id, booth.id, a.id, req.user.id);
+    await db.prepare('INSERT INTO booth_visits (event_id, booth_id, attendee_id, visited_by) VALUES (?,?,?,?)').run(ev.id, booth.id, a.id, req.user.id);
     return res.json({ status: 'booth_recorded', message: `Đã ghi nhận ghé booth "${booth.name}"`, attendee: a, booth: booth.name, just_checked_in: justCheckedIn });
   }
 
   // ----- Quét tại CỔNG CHECK-IN -----
-  // QR được phép quét nhiều lần; lần đầu ghi nhận thời điểm check-in, các lần sau chỉ hiển thị thông tin
   if (a.checked_in_at) {
     return res.json({
       status: 'already_checked',
@@ -746,60 +709,55 @@ router.post('/events/:id/scan', requireLogin, (req, res) => {
       attendee: a,
     });
   }
-  // Tự động xác nhận luôn nếu nhân viên bật chế độ này
   if (req.body.auto_confirm) {
-    db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+    await db.prepare('UPDATE attendees SET checked_in_at = UTC_TIMESTAMP(), checked_in_by = ? WHERE id = ?').run(req.user.id, a.id);
     return res.json({ status: 'checked_in', message: 'Check-in thành công!', attendee: a });
   }
   res.json({ status: 'valid', message: 'Khách đã đăng ký - hợp lệ', attendee: a });
 });
 
-router.post('/events/:id/checkin/:attendeeId', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/checkin/:attendeeId', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không check-in' });
   }
-  const a = db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(req.params.attendeeId, ev.id);
+  const a = await db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(req.params.attendeeId, ev.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy người tham dự' });
   if (a.checked_in_at) return res.status(409).json({ error: 'Người này đã check-in rồi' });
-  db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+  await db.prepare('UPDATE attendees SET checked_in_at = UTC_TIMESTAMP(), checked_in_by = ? WHERE id = ?').run(req.user.id, a.id);
   res.json({ ok: true });
 });
 
-// Thêm khách vãng lai (chưa đăng ký trước) và check-in luôn.
-// Nếu nhân viên đứng ở booth (hoặc quản lý chọn booth) -> ghi nhận luôn lượt ghé booth đó.
-router.post('/events/:id/walkin', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return; // nhân viên check-in được phép
+router.post('/events/:id/walkin', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (req.user.role === 'checkin' && !isEventToday(ev)) return res.status(403).json({ error: 'Chỉ được thêm khách vào đúng ngày tổ chức sự kiện' });
   const { name, email, phone, position, company, tax_code, company_size, salutation, importance } = req.body;
   if (!name) return res.status(400).json({ error: 'Cần nhập Họ và tên' });
-  // Xác định vị trí ghi nhận: nhân viên dùng đúng vị trí được gán; quản lý dùng booth gửi lên (nếu hợp lệ)
   let boothId = req.body.booth_id ? Number(req.body.booth_id) : null;
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
     if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không thêm khách' });
     boothId = mine.booth_id || null;
-  } else if (boothId && !db.prepare('SELECT 1 FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id)) {
+  } else if (boothId && !(await db.prepare('SELECT 1 AS ok FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id))) {
     boothId = null;
   }
-  const info = db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token, is_walkin, checked_in_at, checked_in_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,1,datetime('now'),?)`)
+  const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token, is_walkin, checked_in_at, checked_in_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,1,UTC_TIMESTAMP(),?)`)
     .run(ev.id, name.trim(), (email || '').trim(), String(phone || '').trim(), position || '', company || '', tax_code || '', company_size || '',
       salutation || '', importance || 'Bình thường', newToken(), req.user.id);
   if (boothId) {
-    db.prepare('INSERT OR IGNORE INTO booth_visits (event_id, booth_id, attendee_id, visited_by) VALUES (?,?,?,?)').run(ev.id, boothId, info.lastInsertRowid, req.user.id);
+    await db.prepare('INSERT IGNORE INTO booth_visits (event_id, booth_id, attendee_id, visited_by) VALUES (?,?,?,?)').run(ev.id, boothId, info.lastInsertRowid, req.user.id);
   }
-  const booth = boothId ? db.prepare('SELECT name FROM booths WHERE id = ?').get(boothId) : null;
+  const booth = boothId ? await db.prepare('SELECT name FROM booths WHERE id = ?').get(boothId) : null;
   res.json({ id: info.lastInsertRowid, booth_id: boothId, booth_name: booth ? booth.name : null });
 });
 
-// ============ GIÁM SÁT BOOTH (xem khách đã ghé + ghi chú) ============
-// Xác định booth mà người dùng được quyền giám sát/xem ghi chú (giám sát viên = booth được gán; quản lý = booth chỉ định qua ?booth_id/body)
-function resolveMonitorBooth(req, ev) {
+// ============ GIÁM SÁT BOOTH ============
+async function resolveMonitorBooth(req, ev) {
   if (req.user.role === 'checkin') {
-    const mine = getAssignment(req.user, ev.id);
+    const mine = await getAssignment(req.user, ev.id);
     if (!mine || mine.staff_type !== 'supervisor') return { error: 'Chỉ dành cho Giám sát viên booth' };
     if (!mine.booth_id) return { error: 'Bạn chưa được gán vào booth nào để giám sát' };
     return { boothId: mine.booth_id };
@@ -810,57 +768,55 @@ function resolveMonitorBooth(req, ev) {
   return { boothId: bid };
 }
 
-// Danh sách khách đã ghé booth của giám sát viên (chỉ Họ tên/Chức vụ/Công ty) + ghi chú
-router.get('/events/:id/booth-monitor', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  const r = resolveMonitorBooth(req, ev);
+router.get('/events/:id/booth-monitor', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const r = await resolveMonitorBooth(req, ev);
   if (r.error) return res.status(403).json({ error: r.error });
-  const booth = db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(r.boothId, ev.id);
+  const booth = await db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(r.boothId, ev.id);
   if (!booth) return res.status(404).json({ error: 'Không tìm thấy booth' });
-  const rows = db.prepare(`SELECT a.id, a.name, a.salutation, a.position, a.company, v.note, v.visited_at
+  const rows = await db.prepare(`SELECT a.id, a.name, a.salutation, a.position, a.company, v.note, v.visited_at
     FROM booth_visits v JOIN attendees a ON a.id = v.attendee_id
     WHERE v.event_id = ? AND v.booth_id = ? ORDER BY v.visited_at DESC`).all(ev.id, booth.id);
   res.json({ booth: { id: booth.id, name: booth.name }, rows });
 });
 
-// Lưu / sửa / xoá (để trống) ghi chú giám sát cho 1 khách tại booth
-router.put('/events/:id/booth-note', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  const r = resolveMonitorBooth(req, ev);
+router.put('/events/:id/booth-note', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const r = await resolveMonitorBooth(req, ev);
   if (r.error) return res.status(403).json({ error: r.error });
   const attendeeId = Number(req.body.attendee_id);
   if (!attendeeId) return res.status(400).json({ error: 'Thiếu thông tin khách' });
   const note = String(req.body.note ?? '').trim();
-  const upd = db.prepare('UPDATE booth_visits SET note = ? WHERE event_id = ? AND booth_id = ? AND attendee_id = ?')
+  const upd = await db.prepare('UPDATE booth_visits SET note = ? WHERE event_id = ? AND booth_id = ? AND attendee_id = ?')
     .run(note, ev.id, r.boothId, attendeeId);
   if (!upd.changes) return res.status(404).json({ error: 'Khách này chưa được ghi nhận ghé booth' });
   res.json({ ok: true });
 });
 
 // ============ PHÔI THẺ IN SẴN (badge) ============
-// Sinh thêm phôi thẻ (số tuần tự tiếp theo trong sự kiện) - chỉ quản trị viên
-router.post('/events/:id/badges/generate', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/badges/generate', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const count = Math.min(2000, Math.max(1, Number(req.body.count) || 0));
   if (!count) return res.status(400).json({ error: 'Nhập số lượng phôi cần in (1 - 2000)' });
   let maxN = 0;
-  for (const r of db.prepare('SELECT code FROM badges WHERE event_id = ?').all(ev.id)) {
+  for (const r of await db.prepare('SELECT code FROM badges WHERE event_id = ?').all(ev.id)) {
     const n = parseInt(r.code, 10);
     if (!isNaN(n) && n > maxN) maxN = n;
   }
   const start = maxN + 1;
-  const ins = db.prepare('INSERT OR IGNORE INTO badges (event_id, code) VALUES (?,?)');
-  const tx = db.transaction(() => { for (let i = 0; i < count; i++) ins.run(ev.id, String(start + i).padStart(4, '0')); });
-  tx();
+  // Chèn nhiều dòng trong 1 câu lệnh cho nhanh
+  const values = [];
+  const params = [];
+  for (let i = 0; i < count; i++) { values.push('(?,?)'); params.push(ev.id, String(start + i).padStart(4, '0')); }
+  await db.prepare(`INSERT IGNORE INTO badges (event_id, code) VALUES ${values.join(',')}`).run(...params);
   res.json({ added: count, from: String(start).padStart(4, '0'), to: String(start + count - 1).padStart(4, '0') });
 });
 
-// Danh sách phôi thẻ + thống kê - chỉ quản trị viên
-router.get('/events/:id/badges', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.get('/events/:id/badges', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  const rows = db.prepare(`SELECT b.id, b.code, b.status, b.attendee_id, b.paired_at,
+  const rows = await db.prepare(`SELECT b.id, b.code, b.status, b.attendee_id, b.paired_at,
       a.name AS attendee_name, a.company AS attendee_company FROM badges b
     LEFT JOIN attendees a ON a.id = b.attendee_id WHERE b.event_id = ? ORDER BY b.code`).all(ev.id);
   const total = rows.length;
@@ -869,11 +825,10 @@ router.get('/events/:id/badges', requireLogin, (req, res) => {
   res.json({ rows, total, paired, unpaired: total - paired, stopped });
 });
 
-// Xuất toàn bộ phôi thẻ thành file ZIP chứa các ảnh SVG (QR + mã ID) để gửi nhà in
 router.get('/events/:id/badges/export', requireLogin, async (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  const badges = db.prepare('SELECT code FROM badges WHERE event_id = ? ORDER BY code').all(ev.id);
+  const badges = await db.prepare('SELECT code FROM badges WHERE event_id = ? ORDER BY code').all(ev.id);
   if (!badges.length) return res.status(400).json({ error: 'Chưa có phôi thẻ nào để xuất. Hãy sinh phôi trước.' });
   const zip = new JSZip();
   let csv = 'STT,Ma the\n';
@@ -881,7 +836,7 @@ router.get('/events/:id/badges/export', requireLogin, async (req, res) => {
     zip.file(`${b.code}.svg`, await buildBadgeSvg(ev.id, b.code));
     csv += `${i + 1},${b.code}\n`;
   }
-  zip.file('danh-sach-ma.csv', '﻿' + csv); // BOM để Excel đọc đúng tiếng Việt
+  zip.file('danh-sach-ma.csv', '﻿' + csv);
   zip.file('HUONG-DAN.txt', `PHOI THE SU KIEN: ${ev.name}\n\n` +
     `- Moi file .svg la 1 phoi the (QR + ma ID ben duoi), khung vuong ti le 1:1.\n` +
     `- SVG la anh vector: in net o moi kich thuoc.\n` +
@@ -892,67 +847,63 @@ router.get('/events/:id/badges/export', requireLogin, async (req, res) => {
   res.type('application/zip').send(buf);
 });
 
-// Tra khách theo mã quét (mã QR email hoặc mã phôi thẻ) + các thẻ đang gán - phục vụ màn Gán thẻ
-router.get('/events/:id/badges/lookup', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  if (!badgeOpGuard(req, res, ev)) return;
+router.get('/events/:id/badges/lookup', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (!(await badgeOpGuard(req, res, ev))) return;
   const token = String(req.query.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
-  const a = resolveAttendee(ev.id, token);
+  const a = await resolveAttendee(ev.id, token);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy khách với mã này. Hãy quét mã QR trong email của khách.' });
-  res.json({ attendee: a, badges: badgesOfAttendee(a.id) });
+  res.json({ attendee: a, badges: await badgesOfAttendee(a.id) });
 });
 
-// Gán 1 phôi thẻ cho khách (quét mã khách + mã phôi). Tự động check-in khách nếu chưa.
-router.post('/events/:id/badges/pair', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  if (!badgeOpGuard(req, res, ev)) return;
+router.post('/events/:id/badges/pair', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (!(await badgeOpGuard(req, res, ev))) return;
   const guestToken = String(req.body.attendee_token || '').trim();
   const badgeToken = String(req.body.badge_code || '').trim();
   if (!guestToken || !badgeToken) return res.status(400).json({ error: 'Cần quét cả mã khách và mã phôi thẻ' });
-  const a = resolveAttendee(ev.id, guestToken);
+  const a = await resolveAttendee(ev.id, guestToken);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy khách với mã này' });
-  const badge = findBadge(ev.id, badgeToken);
+  const badge = await findBadge(ev.id, badgeToken);
   if (!badge || badge === 'wrong_event') return res.status(404).json({ error: `Không tìm thấy phôi thẻ số "${badgeToken}" trong sự kiện này` });
   if (badge.attendee_id && badge.attendee_id === a.id) {
-    return res.json({ ok: true, already: true, message: `Thẻ số ${badge.code} đã gán cho khách này rồi`, attendee: a, badges: badgesOfAttendee(a.id) });
+    return res.json({ ok: true, already: true, message: `Thẻ số ${badge.code} đã gán cho khách này rồi`, attendee: a, badges: await badgesOfAttendee(a.id) });
   }
   if (badge.attendee_id && badge.attendee_id !== a.id && !req.body.force) {
-    const other = db.prepare('SELECT name FROM attendees WHERE id = ?').get(badge.attendee_id);
+    const other = await db.prepare('SELECT name FROM attendees WHERE id = ?').get(badge.attendee_id);
     return res.status(409).json({ duplicate: true, error: `Thẻ số ${badge.code} đã gán cho khách khác (${other ? other.name : '?'}). Vẫn gán lại cho khách này?` });
   }
-  db.prepare("UPDATE badges SET attendee_id = ?, status = 'active', paired_at = datetime('now'), paired_by = ? WHERE id = ?")
+  await db.prepare("UPDATE badges SET attendee_id = ?, status = 'active', paired_at = UTC_TIMESTAMP(), paired_by = ? WHERE id = ?")
     .run(a.id, req.user.id, badge.id);
-  // Gán thẻ tại quầy = khách đã có mặt -> ghi nhận check-in nếu chưa
   if (!a.checked_in_at) {
-    db.prepare("UPDATE attendees SET checked_in_at = datetime('now'), checked_in_by = ? WHERE id = ?").run(req.user.id, a.id);
+    await db.prepare('UPDATE attendees SET checked_in_at = UTC_TIMESTAMP(), checked_in_by = ? WHERE id = ?').run(req.user.id, a.id);
   }
-  const fresh = db.prepare('SELECT * FROM attendees WHERE id = ?').get(a.id);
-  res.json({ ok: true, message: `Đã gán thẻ số ${badge.code} cho ${fresh.name}`, attendee: fresh, badges: badgesOfAttendee(a.id) });
+  const fresh = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(a.id);
+  res.json({ ok: true, message: `Đã gán thẻ số ${badge.code} cho ${fresh.name}`, attendee: fresh, badges: await badgesOfAttendee(a.id) });
 });
 
-// Ngừng / dùng lại 1 phôi thẻ (xử lý mất thẻ, chống gian lận)
-router.put('/events/:id/badges/:badgeId/status', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  if (!badgeOpGuard(req, res, ev)) return;
-  const badge = db.prepare('SELECT * FROM badges WHERE id = ? AND event_id = ?').get(req.params.badgeId, ev.id);
+router.put('/events/:id/badges/:badgeId/status', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (!(await badgeOpGuard(req, res, ev))) return;
+  const badge = await db.prepare('SELECT * FROM badges WHERE id = ? AND event_id = ?').get(req.params.badgeId, ev.id);
   if (!badge) return res.status(404).json({ error: 'Không tìm thấy phôi thẻ' });
   const status = req.body.status === 'stopped' ? 'stopped' : 'active';
-  db.prepare('UPDATE badges SET status = ? WHERE id = ?').run(status, badge.id);
+  await db.prepare('UPDATE badges SET status = ? WHERE id = ?').run(status, badge.id);
   res.json({ ok: true, status });
 });
 
 // ============ CÀI ĐẶT EMAIL CỦA SỰ KIỆN ============
-router.get('/events/:id/email-settings', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  res.json(getEmailSettings(ev.id));
+router.get('/events/:id/email-settings', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  res.json(await getEmailSettings(ev.id));
 });
-router.put('/events/:id/email-settings', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.put('/events/:id/email-settings', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
-  const s = getEmailSettings(ev.id);
+  const s = await getEmailSettings(ev.id);
   const b = req.body;
-  db.prepare(`UPDATE email_settings SET confirm_subject=?, confirm_body=?, auto_send_confirm=?,
+  await db.prepare(`UPDATE email_settings SET confirm_subject=?, confirm_body=?, auto_send_confirm=?,
     thank_subject=?, thank_body=?, thank_delay_minutes=?, thank_enabled=?, header_width=?, footer_width=? WHERE event_id=?`)
     .run(b.confirm_subject ?? s.confirm_subject, b.confirm_body ?? s.confirm_body,
       b.auto_send_confirm ? 1 : 0, b.thank_subject ?? s.thank_subject, b.thank_body ?? s.thank_body,
@@ -962,74 +913,69 @@ router.put('/events/:id/email-settings', requireLogin, (req, res) => {
   res.json({ ok: true });
 });
 
-// Upload ảnh header/footer cho email của sự kiện (lưu thẳng vào database để Litestream sao lưu được)
 const MIME_BY_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-router.post('/events/:id/email-image/:type', requireLogin, upload.single('file'), (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.post('/events/:id/email-image/:type', requireLogin, upload.single('file'), async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const type = req.params.type;
   if (!['header', 'footer'].includes(type)) return res.status(400).json({ error: 'Loại ảnh không hợp lệ' });
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn ảnh' });
   const ext = (path.extname(req.file.originalname) || '.png').toLowerCase();
   if (!MIME_BY_EXT[ext]) return res.status(400).json({ error: 'Chỉ nhận ảnh PNG, JPG, GIF, WEBP' });
-  getEmailSettings(ev.id);
-  db.prepare('INSERT INTO email_images (event_id, kind, mime, data) VALUES (?,?,?,?) ON CONFLICT(event_id, kind) DO UPDATE SET mime=excluded.mime, data=excluded.data')
+  await getEmailSettings(ev.id);
+  await db.prepare('INSERT INTO email_images (event_id, kind, mime, data) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE mime=VALUES(mime), data=VALUES(data)')
     .run(ev.id, type, MIME_BY_EXT[ext], req.file.buffer);
-  // Cột này dùng làm "cờ" báo có ảnh + lưu mime (giao diện cũ vẫn hoạt động)
-  db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = ? WHERE event_id = ?`).run(MIME_BY_EXT[ext], ev.id);
+  await db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = ? WHERE event_id = ?`).run(MIME_BY_EXT[ext], ev.id);
   res.json({ ok: true });
 });
 
-// Xoá ảnh header/footer
-router.delete('/events/:id/email-image/:type', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.delete('/events/:id/email-image/:type', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
   const type = req.params.type;
   if (!['header', 'footer'].includes(type)) return res.status(400).json({ error: 'Loại ảnh không hợp lệ' });
-  getEmailSettings(ev.id);
-  db.prepare('DELETE FROM email_images WHERE event_id = ? AND kind = ?').run(ev.id, type);
-  db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = '' WHERE event_id = ?`).run(ev.id);
+  await getEmailSettings(ev.id);
+  await db.prepare('DELETE FROM email_images WHERE event_id = ? AND kind = ?').run(ev.id, type);
+  await db.prepare(`UPDATE email_settings SET ${type === 'header' ? 'header_image' : 'footer_image'} = '' WHERE event_id = ?`).run(ev.id);
   res.json({ ok: true });
 });
 
-// Phục vụ ảnh header/footer từ database (công khai - để email gửi qua Brevo lấy được ảnh)
-router.get('/events/:id/email-image/:type.img', (req, res) => {
-  const row = db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(req.params.id, req.params.type);
+router.get('/events/:id/email-image/:type.img', async (req, res) => {
+  const row = await db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(req.params.id, req.params.type);
   if (!row) return res.status(404).end();
   res.type(row.mime).set('Cache-Control', 'no-cache').send(row.data);
 });
 
-// Xem trước email trên trình duyệt (dữ liệu mẫu hoặc người đầu tiên trong danh sách)
-router.get('/events/:id/email-preview', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
+router.get('/events/:id/email-preview', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
   const type = req.query.type === 'thank' ? 'thank' : 'confirm';
-  const settings = getEmailSettings(ev.id);
-  let attendee = db.prepare('SELECT * FROM attendees WHERE event_id = ? ORDER BY id LIMIT 1').get(ev.id);
+  const settings = await getEmailSettings(ev.id);
+  let attendee = await db.prepare('SELECT * FROM attendees WHERE event_id = ? ORDER BY id LIMIT 1').get(ev.id);
   if (!attendee) {
     attendee = { id: 0, name: 'Nguyễn Văn A (mẫu)', company: 'Công ty TNHH ABC', qr_token: 'MA-QR-MAU-XEM-TRUOC' };
   }
-  const { html } = buildEmail(type, attendee, ev, settings, 'web');
+  const { html } = await buildEmail(type, attendee, ev, settings, 'web');
   const subject = fillTemplate(type === 'confirm' ? settings.confirm_subject : settings.thank_subject, attendee, ev)
     || (type === 'confirm' ? `Xác nhận đăng ký: ${ev.name}` : `Cảm ơn bạn đã tham dự ${ev.name}`);
   res.json({ subject, html });
 });
 
-// ============ CẤU HÌNH SMTP (gửi email) ============
-router.get('/smtp', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const s = db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
+// ============ CẤU HÌNH SMTP ============
+router.get('/smtp', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const s = await db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
   res.json({ ...s, smtp_pass: s.smtp_pass ? '********' : '', brevo_api_key: s.brevo_api_key ? '********' : '' });
 });
-router.put('/smtp', requireLogin, requireRole('super_admin', 'admin'), (req, res) => {
-  const cur = db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
+router.put('/smtp', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
+  const cur = await db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
   const b = req.body;
   const pass = (b.smtp_pass && b.smtp_pass !== '********') ? b.smtp_pass : cur.smtp_pass;
   const brevoKey = b.brevo_api_key === '********' ? cur.brevo_api_key : (b.brevo_api_key || '').trim();
-  db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=?, brevo_api_key=?, sender_email=? WHERE id=1')
+  await db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=?, brevo_api_key=?, sender_email=? WHERE id=1')
     .run(b.host || 'smtp.gmail.com', Number(b.port) || 465, b.secure ? 1 : 0, b.smtp_user || '', pass, b.from_name || '', brevoKey, (b.sender_email || '').trim());
   res.json({ ok: true });
 });
 router.post('/smtp/test', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {
-  const t = getTransport();
+  const t = await getTransport();
   if (!t) return res.status(400).json({ error: 'Chưa nhập đủ thông tin gửi email' });
   try {
     await deliver(t, {
@@ -1042,44 +988,42 @@ router.post('/smtp/test', requireLogin, requireRole('super_admin', 'admin'), asy
 });
 
 // ============ BÁO CÁO ============
-function attachBoothVisits(eventId, rows) {
-  const visits = db.prepare(`SELECT v.attendee_id, v.visited_at, v.note, b.name FROM booth_visits v
+async function attachBoothVisits(eventId, rows) {
+  const visits = await db.prepare(`SELECT v.attendee_id, v.visited_at, v.note, b.name FROM booth_visits v
     JOIN booths b ON b.id = v.booth_id WHERE v.event_id = ? ORDER BY v.visited_at`).all(eventId);
   const byAttendee = {};
   for (const v of visits) (byAttendee[v.attendee_id] = byAttendee[v.attendee_id] || []).push({ name: v.name, visited_at: v.visited_at, note: v.note || '' });
   return rows.map(r => ({ ...r, booth_visits: byAttendee[r.id] || [] }));
 }
 
-// Chặn vị trí chỉ-xem (Giám sát/Quản lý) khỏi báo cáo chi tiết (có thông tin cá nhân)
-function blockViewOnlyReport(req, res, ev) {
+async function blockViewOnlyReport(req, res, ev) {
   if (req.user.role !== 'checkin') return false;
-  const mine = getAssignment(req.user, ev.id);
+  const mine = await getAssignment(req.user, ev.id);
   if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Bạn không có quyền xem báo cáo chi tiết' }); return true; }
   return false;
 }
 
-router.get('/events/:id/report', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  if (blockViewOnlyReport(req, res, ev)) return;
-  let rows = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+router.get('/events/:id/report', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (await blockViewOnlyReport(req, res, ev)) return;
+  let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
-  rows = attachBoothVisits(ev.id, rows).map(r => ({ ...r, eligible: isEligible(r, ev) }));
+  rows = (await attachBoothVisits(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
   const total = rows.length;
   const checkedin = rows.filter(r => r.checked_in_at).length;
   const walkin = rows.filter(r => r.is_walkin).length;
-  // Thống kê lượt ghé từng booth
-  const booths = db.prepare(`SELECT b.id, b.name, COUNT(v.id) AS visit_count FROM booths b
+  const booths = await db.prepare(`SELECT b.id, b.name, COUNT(v.id) AS visit_count FROM booths b
     LEFT JOIN booth_visits v ON v.booth_id = b.id WHERE b.event_id = ? GROUP BY b.id ORDER BY b.sort, b.id`).all(ev.id);
   res.json({ total, checkedin, walkin, not_checkedin: total - checkedin, rows, booths,
     positions: POSITIONS, company_sizes: COMPANY_SIZES, importances: IMPORTANCES });
 });
 
-router.get('/events/:id/report/export', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  if (blockViewOnlyReport(req, res, ev)) return;
-  let rows = db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+router.get('/events/:id/report/export', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (await blockViewOnlyReport(req, res, ev)) return;
+  let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
-  rows = attachBoothVisits(ev.id, rows);
+  rows = await attachBoothVisits(ev.id, rows);
   const data = rows.map(r => ({
     'Xưng hô': r.salutation, 'Họ và tên': r.name, 'Email': r.email, 'Số điện thoại': r.phone,
     'Chức vụ': r.position, 'Mức độ quan trọng': r.importance,
@@ -1103,11 +1047,10 @@ router.get('/events/:id/report/export', requireLogin, (req, res) => {
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
 });
 
-// Số liệu tổng hợp cho vị trí Quản lý (chỉ thuộc tính để đếm, KHÔNG kèm thông tin cá nhân)
-router.get('/events/:id/stats', requireLogin, (req, res) => {
-  const ev = getEventOr404(req, res); if (!ev) return;
-  const rows = db.prepare('SELECT id, position, company_size, importance, is_walkin, checked_in_at FROM attendees WHERE event_id = ?').all(ev.id);
-  const visits = db.prepare('SELECT attendee_id, booth_id FROM booth_visits WHERE event_id = ?').all(ev.id);
+router.get('/events/:id/stats', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const rows = await db.prepare('SELECT id, position, company_size, importance, is_walkin, checked_in_at FROM attendees WHERE event_id = ?').all(ev.id);
+  const visits = await db.prepare('SELECT attendee_id, booth_id FROM booth_visits WHERE event_id = ?').all(ev.id);
   const boothsByAtt = {};
   for (const v of visits) (boothsByAtt[v.attendee_id] = boothsByAtt[v.attendee_id] || []).push(v.booth_id);
   const data = rows.map(r => ({
@@ -1118,11 +1061,10 @@ router.get('/events/:id/stats', requireLogin, (req, res) => {
     importance: r.importance || 'Bình thường',
     booths: boothsByAtt[r.id] || [],
   }));
-  const booths = db.prepare('SELECT id, name FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
+  const booths = await db.prepare('SELECT id, name FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
   res.json({ event: { name: ev.name, event_date: ev.event_date }, data, booths, positions: POSITIONS, company_sizes: COMPANY_SIZES, importances: IMPORTANCES });
 });
 
-// Danh sách lựa chọn cho form
 router.get('/options', requireLogin, (req, res) => res.json({
   positions: POSITIONS, company_sizes: COMPANY_SIZES, roles: ROLES,
   salutations: SALUTATIONS, importances: IMPORTANCES,

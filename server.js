@@ -3,7 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const { UPLOAD_DIR } = require('./config');
-require('./db');
+const db = require('./db');
 const { startThankYouScheduler } = require('./email');
 
 const app = express();
@@ -24,9 +24,14 @@ app.use('/api', require('./routes/api'));
 app.use('/uploads', express.static(UPLOAD_DIR));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Bộ hẹn giờ gửi email cảm ơn
-startThankYouScheduler();
-
-app.listen(PORT, () => {
-  console.log(`✔ Hệ thống Check-in đang chạy tại: http://localhost:${PORT}`);
+// Khởi tạo database (tạo bảng + seed) rồi mới mở cổng
+db.init().then(() => {
+  // Bộ hẹn giờ gửi email cảm ơn
+  startThankYouScheduler();
+  app.listen(PORT, () => {
+    console.log(`✔ Hệ thống Check-in đang chạy tại: http://localhost:${PORT}`);
+  });
+}).catch(err => {
+  console.error('✖ Không kết nối được database:', err.message);
+  process.exit(1);
 });

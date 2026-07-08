@@ -379,6 +379,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - API `GET/PUT .../booth-monitor/lookup` và `.../booth-monitor/potential-note`, guard bằng `resolveMonitorBooth` (không phải `badgeOpGuard`) để giám sát viên (`VIEW_ONLY_TYPES`) vẫn tra được dù bị chặn thao tác thẻ ở nơi khác. Chỉ bật cho sự kiện có phôi thẻ (`badge_count>0`).
     - `GET /report/export` nhận thêm `min_booths` để xuất riêng danh sách đủ điều kiện quay số; ngưỡng không lưu cấu hình, gõ lại mỗi lần trên UI Báo cáo — vì mỗi sự kiện có số booth khác nhau.
     - **Verify:** Docker (MySQL) + preview, dựng dữ liệu demo (booth, phôi thẻ, gán thẻ, quét booth), test tra mã thẻ → đúng khách, lưu ghi chú không tạo dòng `booth_visits` mới, lọc + xuất Excel đúng người/đúng cột, 0 lỗi console.
+16. **Deploy bản Vue+MySQL lên GCE VM để test môi trường thật** (2026-07-08/09) — thực hiện phương án đã chốt ở mục 15.4: tạo VM `misa-checkin-test` (project `prapplication-479309`), cài Docker + `gh` CLI, clone `rewrite-vue-mysql` qua `gh auth login` (không dùng PAT), thêm Caddy + domain tạm **sslip.io** để có HTTPS thật (Let's Encrypt) mà không cần mua domain. Chạy bằng `docker-compose.internal.yml` (đã có sẵn, không sửa) + `docker-compose.override.yml` riêng trên VM (SESSION_SECRET thật, BASE_URL, service Caddy — không commit vào repo vì gắn IP VM cụ thể). Đã verify đăng nhập + HTTPS hợp lệ qua https://34-87-20-119.sslip.io. Xem chi tiết vận hành (lệnh SSH, dừng/xoá VM) ở mục 15.4.
 
 ---
 
@@ -389,7 +390,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
 - [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
-- [ ] **Deploy GCE VM** (bản Vue+MySQL, để test môi trường thật) — phương án đã chốt ở mục 15.4, CHƯA triển khai. Làm trên nhánh `rewrite-vue-mysql`, không đụng bản Cloud Run cũ (SQLite/vanilla).
+- [x] ~~Deploy GCE VM~~ → đã triển khai (2026-07-08/09), https://34-87-20-119.sslip.io, xem mục 15.4. Đang chạy 24/7 — nhớ dừng VM (`gcloud compute instances stop`) khi ngừng test để khỏi tốn phí.
 
 ---
 
@@ -429,12 +430,35 @@ Chủ dự án tưởng thiếu 4 vai trò (Lễ tân/Giám sát/Quản lý/Qué
 - **Đã chốt phương án:** dựng **1 Google Compute Engine (GCE) VM**, chạy đúng `docker-compose.internal.yml` đã test kỹ trên Docker local (app + MySQL trong cùng VM). KHÔNG dùng Cloud Run cho bản này (Cloud Run stateless, cần tách MySQL ra dịch vụ ngoài — phức tạp/tốn hơn cho nhu cầu "chỉ để test").
 - **Project GCP dùng chung:** `prapplication-479309` (cùng project với Cloud Run bản cũ — công ty đã trả phí, có thể dùng cấu hình trả phí nếu cần, không cần tối ưu về 0 đồng).
 - **Quan trọng — đã giải thích rõ với chủ dự án:** GCE VM là máy chủ chạy **trên hạ tầng Google 24/7**, KHÔNG phải máy tính vật lý của chủ dự án — tắt máy cá nhân không ảnh hưởng, mọi người vẫn truy cập được qua internet.
-- **Việc cần làm khi triển khai:** tạo VM (Ubuntu, kích thước đủ chạy Node+MySQL, ví dụ e2-small/medium tuỳ tải), cài Docker + docker-compose, clone nhánh `rewrite-vue-mysql`, chạy `docker compose -f docker-compose.internal.yml up -d --build`, cấu hình HTTPS (Caddy hoặc reverse proxy + domain/subdomain riêng — chưa chốt tên miền, cần hỏi lại khi tới bước này), mở firewall port 80/443 trên GCP.
 - **Không đụng bản Cloud Run cũ** (SQLite/vanilla) — đây là service hoàn toàn tách biệt, phục vụ mục đích test bản mới song song.
+
+**✅ Đã triển khai (2026-07-08/09):**
+- **Địa chỉ:** https://34-87-20-119.sslip.io — VM `misa-checkin-test`, zone `asia-southeast1-a`, machine type `e2-medium`, disk 30GB, image `ubuntu-2404-lts-amd64`, project `prapplication-479309`. IP ngoài (tĩnh theo VM, mất nếu xoá VM): `34.87.20.119`.
+- **HTTPS:** dùng domain tạm miễn phí **sslip.io** (`34-87-20-119.sslip.io` map thẳng ra IP) — **Caddy** (`caddy:2-alpine`, service `caddy` trong `docker-compose.override.yml` trên VM, KHÔNG commit vào repo vì gắn với IP VM cụ thể) tự xin chứng chỉ Let's Encrypt thật (HTTP-01 challenge qua port 80) và reverse-proxy vào `app:3000`. Đã xác nhận HTTP/2 + TLS hợp lệ, không cảnh báo trình duyệt.
+- **Firewall:** rule `allow-http-https` (ingress tcp:80,443, tag `http-server`/`https-server`) — tạo mới vì project trước đó chỉ có rule mặc định (ssh/rdp/icmp/internal).
+- **Git trên VM:** cài `gh` CLI, đăng nhập bằng tài khoản GitHub `tuannhh` qua browser-based device flow (`gh auth login --web`), sau đó `gh repo clone tuannhh/misa-event-checkin` (không dùng PAT cũ — giải quyết luôn việc treo ở mục 10 cho phần deploy này, PAT cũ vẫn cần soát lại riêng nếu còn dùng ở nơi khác).
+- **Lệnh chạy:** `sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml up -d --build` (2 file compose gộp: file gốc trong repo + file override chứa `SESSION_SECRET` ngẫu nhiên thật, `BASE_URL=https://34-87-20-119.sslip.io`, và service `caddy`). Docker đã `systemctl enable`, tất cả service có `restart: unless-stopped` → tự phục hồi khi VM khởi động lại.
+- **Quản lý VM:**
+  ```bash
+  # SSH vào VM (từ máy đã cài gcloud + đăng nhập đúng project):
+  ~/google-cloud-sdk/bin/gcloud compute ssh misa-checkin-test --zone=asia-southeast1-a
+  # Trên VM, thư mục misa-event-checkin/:
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml ps
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml logs -f app
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml down        # dừng, giữ dữ liệu
+  # Cập nhật code mới: git pull rồi chạy lại lệnh "up -d --build" ở trên.
+  # Dừng hẳn VM để khỏi tốn phí (khi không cần test nữa):
+  ~/google-cloud-sdk/bin/gcloud compute instances stop misa-checkin-test --zone=asia-southeast1-a
+  # Chạy lại (IP ngoài có thể đổi sau khi stop/start → phải sửa lại sslip.io domain trong Caddyfile + BASE_URL nếu IP đổi):
+  ~/google-cloud-sdk/bin/gcloud compute instances start misa-checkin-test --zone=asia-southeast1-a
+  ```
+- **Lưu ý chi phí:** VM `e2-medium` chạy 24/7 sẽ phát sinh phí GCP liên tục. Muốn ngừng tốn phí mà vẫn giữ dữ liệu → dùng `gcloud compute instances stop` (đĩa vẫn tính phí lưu trữ nhưng rẻ hơn nhiều so với instance chạy). Muốn xoá hẳn (mất dữ liệu MySQL/uploads trong VM) → `gcloud compute instances delete misa-checkin-test --zone=asia-southeast1-a`.
+- Super admin mặc định vẫn là `tuanbui88vn@gmail.com` (mật khẩu seed sẵn trong code) — **nên đổi mật khẩu** sau khi bắt đầu dùng thật trên VM này.
 
 ### 15.5 Trạng thái
 - ✅ 15.2 (Giám sát bóng ma) và 15.3 (Lucky draw filter/export) **đã code + test xong** (2026-07-08, commit `ddaf920`, xem chi tiết ở mục 9.15).
-- ⏳ 15.4 (Deploy GCE VM) **CHƯA triển khai** — phương án hạ tầng đã chốt (sslip.io cho HTTPS, `gh` CLI đăng nhập trên VM để clone code), việc còn lại thuần tạo tài nguyên GCP thật (có phát sinh phí liên tục) nên cần xác nhận lại với chủ dự án trước khi tạo VM.
+- ✅ 15.4 (Deploy GCE VM) **đã triển khai xong** (2026-07-08/09) — https://34-87-20-119.sslip.io, xem chi tiết vận hành ở mục 15.4. VM đang chạy 24/7 (phát sinh phí) — nhớ `gcloud compute instances stop` khi không cần test nữa.
+- Toàn bộ mục 15 đã hoàn tất phần "chưa code" ghi nhận ngày 2026-07-08.
 
 ---
 

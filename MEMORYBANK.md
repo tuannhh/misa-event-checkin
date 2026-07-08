@@ -305,7 +305,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
   ```bash
   gcloud run deploy misa-event-checkin --source . --region asia-southeast1
   ```
-  (gcloud tại `%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd` trên máy Windows của chủ dự án).
+  Deploy giữ nguyên env vars + scaling (min/max=1) của service cũ. gcloud: máy Windows tại `%LOCALAPPDATA%\Google\Cloud SDK\...\gcloud.cmd`; **máy Mac (arm64) tại `~/google-cloud-sdk/bin/gcloud`** — đã cài (SDK 575) + login `tuanbui88vn@gmail.com`, project `prapplication-479309`. Railway đã **hết credit** → Cloud Run là nơi deploy chính.
 - **Ảnh header/footer email:** lưu trong bảng `email_images` (BLOB), KHÔNG lưu file — vì Litestream chỉ sao lưu file DB.
 - **Dockerfile:** `node:20-slim` + `ca-certificates` (Litestream/Go cần CA store riêng, thiếu → lỗi x509 âm thầm) + `python3 make g++` (better-sqlite3 cần compile lại trên Linux x86_64, khác ARM Mac).
 - **Local, Railway (cũ), Cloud Run là 3 database HOÀN TOÀN riêng biệt** — làm gì ở local không tự hiện ở cloud.

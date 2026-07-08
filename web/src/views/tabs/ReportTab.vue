@@ -14,19 +14,24 @@ const props = defineProps({ ev: Object });
 const toast = useToast();
 const d = ref(null);
 const q = ref(''); const fStatus = ref(''); const fImp = ref(''); const fPos = ref(''); const fSize = ref('');
+// Ngưỡng số booth tối thiểu cho lucky draw - gõ lại mỗi lần lọc, KHÔNG lưu cấu hình theo sự kiện
+// (mỗi sự kiện số booth/tiêu chí khác nhau, đã chốt với chủ dự án).
+const minBooths = ref('');
 const canManage = computed(() => props.ev.can_manage);
 
 async function load() { d.value = await api(`/events/${props.ev.id}/report`); }
 onMounted(load);
 
 const exportUrl = computed(() => `/api/events/${props.ev.id}/report/export`);
+const luckyExportUrl = computed(() => `/api/events/${props.ev.id}/report/export?min_booths=${Number(minBooths.value) || 0}`);
 const opt = (arr, allLabel) => [{ value: '', label: allLabel }, ...(arr || []).map(v => ({ value: v, label: v }))];
 const pct = (n, dd) => (dd ? Math.round(n / dd * 100) : 0);
 
 const filtered = computed(() => (d.value?.rows || []).filter(r =>
   (!q.value || (r.name + ' ' + r.phone + ' ' + r.company + ' ' + r.email).toLowerCase().includes(q.value.toLowerCase())) &&
   (!fStatus.value || (fStatus.value === 'in' ? r.checked_in_at : !r.checked_in_at)) &&
-  (!fImp.value || r.importance === fImp.value) && (!fPos.value || r.position === fPos.value) && (!fSize.value || r.company_size === fSize.value)));
+  (!fImp.value || r.importance === fImp.value) && (!fPos.value || r.position === fPos.value) && (!fSize.value || r.company_size === fSize.value) &&
+  (!minBooths.value || (r.booth_visits?.length || 0) >= Number(minBooths.value))));
 
 const impColor = (i) => ({ VIP: 'warning', VVIP: 'danger', Speaker: 'info', 'Ban lãnh đạo': 'danger', 'Ban Tổ chức': 'info' }[i] || 'neutral');
 
@@ -72,11 +77,18 @@ async function save() {
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.rows.length }}</b> người</div>
 
+    <div class="toolbar">
+      <span class="muted" style="font-size:13px">🎁 Lucky draw — khách ghé tối thiểu</span>
+      <div style="width:110px"><MInput v-model="minBooths" type="number" placeholder="VD 8" /></div>
+      <span class="muted" style="font-size:13px">booth</span>
+      <a class="lnk-btn" :class="{ dis: !(Number(minBooths) > 0) }" :href="luckyExportUrl" download>⬇ Xuất DS đủ ĐK quay số</a>
+    </div>
+
     <div class="card" style="padding:0;overflow-x:auto">
       <table class="tbl">
         <thead><tr>
           <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian</th>
-          <th>Booth đã ghé</th><th>📝 Ghi chú giám sát</th><th>NV check-in</th><th v-if="canManage"></th>
+          <th>Booth đã ghé</th><th>📝 Ghi chú giám sát</th><th>⭐ Tiềm năng</th><th>NV check-in</th><th v-if="canManage"></th>
         </tr></thead>
         <tbody>
           <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
@@ -105,6 +117,13 @@ async function save() {
                 <div style="font-size:12px"><b>{{ bv.name }}:</b> {{ bv.note }}</div>
               </template>
             </td>
+            <td>
+              <MTag v-if="(r.potential_notes || []).some(n => n.is_potential)" color="warning" size="sm">⭐ Tiềm năng</MTag>
+              <span v-else class="muted">—</span>
+              <template v-for="(n, i) in (r.potential_notes || []).filter(x => x.note)" :key="i">
+                <div style="font-size:12px;margin-top:3px"><b>{{ n.name }}:</b> {{ n.note }}</div>
+              </template>
+            </td>
             <td>{{ r.checked_in_by_name || '' }}</td>
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
               <span class="cell-actions" style="justify-content:flex-end">
@@ -113,7 +132,7 @@ async function save() {
               </span>
             </td>
           </tr>
-          <tr v-if="!filtered.length"><td :colspan="canManage ? 10 : 9" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>
+          <tr v-if="!filtered.length"><td :colspan="canManage ? 11 : 10" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>
         </tbody>
       </table>
     </div>
@@ -137,4 +156,5 @@ h3 { font-size: 16px; font-weight: 700; margin: 0; }
 .tbl th { background: #f9fafb; font-weight: 600; white-space: nowrap; }
 .lnk-btn { display: inline-flex; align-items: center; padding: 0 14px; height: 32px; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; color: #374151; text-decoration: none; font-weight: 600; font-size: 13px; }
 .lnk-btn:hover { background: var(--app-bg); }
+.lnk-btn.dis { opacity: .5; pointer-events: none; }
 </style>

@@ -152,6 +152,24 @@ async function init() {
       CONSTRAINT fk_badge_att FOREIGN KEY (attendee_id) REFERENCES attendees(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
+    // Ghi chú "giám sát bóng ma" - tra khách bằng mã thẻ, tách biệt hoàn toàn khỏi booth_visits
+    // (booth_visits dùng để tính điều kiện lucky draw, bảng này không được ảnh hưởng tới đó).
+    `CREATE TABLE IF NOT EXISTS booth_potential_notes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      booth_id INT NOT NULL,
+      attendee_id INT NOT NULL,
+      note TEXT,
+      is_potential TINYINT NOT NULL DEFAULT 0,
+      updated_by INT NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      updated_at DATETIME DEFAULT (UTC_TIMESTAMP()) ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_booth_attendee_potential (booth_id, attendee_id),
+      CONSTRAINT fk_bpn_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bpn_booth FOREIGN KEY (booth_id) REFERENCES booths(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bpn_att FOREIGN KEY (attendee_id) REFERENCES attendees(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
     `CREATE TABLE IF NOT EXISTS smtp_settings (
       id INT PRIMARY KEY,
       host VARCHAR(255) NOT NULL DEFAULT 'smtp.gmail.com',

@@ -793,6 +793,42 @@ router.put('/events/:id/booth-note', requireLogin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// "Giám sát bóng ma": tra khách bằng mã thẻ (không quét), ghi chú + tick tiềm năng lưu TÁCH BIỆT
+// khỏi booth_visits để không ảnh hưởng điều kiện lucky draw. Chỉ áp dụng sự kiện có phôi thẻ.
+router.get('/events/:id/booth-monitor/lookup', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const r = await resolveMonitorBooth(req, ev);
+  if (r.error) return res.status(403).json({ error: r.error });
+  const badgeCount = (await db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id)).c;
+  if (!badgeCount) return res.status(400).json({ error: 'Sự kiện này không dùng phôi thẻ, không tra được bằng mã thẻ' });
+  const code = String(req.query.code || '').trim();
+  if (!code) return res.status(400).json({ error: 'Nhập mã thẻ cần tra' });
+  const attendee = await resolveAttendee(ev.id, code);
+  if (!attendee) return res.status(404).json({ error: 'Không tìm thấy khách với mã thẻ này' });
+  const existing = await db.prepare('SELECT note, is_potential FROM booth_potential_notes WHERE booth_id = ? AND attendee_id = ?')
+    .get(r.boothId, attendee.id);
+  res.json({
+    attendee: { id: attendee.id, name: attendee.name, salutation: attendee.salutation, position: attendee.position, company: attendee.company },
+    note: existing ? existing.note : '',
+    is_potential: existing ? !!existing.is_potential : false,
+  });
+});
+
+router.put('/events/:id/booth-monitor/potential-note', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const r = await resolveMonitorBooth(req, ev);
+  if (r.error) return res.status(403).json({ error: r.error });
+  const attendeeId = Number(req.body.attendee_id);
+  if (!attendeeId) return res.status(400).json({ error: 'Thiếu thông tin khách' });
+  const note = String(req.body.note ?? '').trim();
+  const isPotential = req.body.is_potential ? 1 : 0;
+  await db.prepare(`INSERT INTO booth_potential_notes (event_id, booth_id, attendee_id, note, is_potential, updated_by)
+    VALUES (?,?,?,?,?,?)
+    ON DUPLICATE KEY UPDATE note = VALUES(note), is_potential = VALUES(is_potential), updated_by = VALUES(updated_by)`)
+    .run(ev.id, r.boothId, attendeeId, note, isPotential, req.user.id);
+  res.json({ ok: true });
+});
+
 // ============ PHÔI THẺ IN SẴN (badge) ============
 router.post('/events/:id/badges/generate', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
@@ -996,6 +1032,15 @@ async function attachBoothVisits(eventId, rows) {
   return rows.map(r => ({ ...r, booth_visits: byAttendee[r.id] || [] }));
 }
 
+// Ghi chú "giám sát bóng ma" (booth_potential_notes) - TÁCH BIỆT khỏi booth_visits, không đếm vào lucky draw.
+async function attachPotentialNotes(eventId, rows) {
+  const notes = await db.prepare(`SELECT n.attendee_id, n.note, n.is_potential, b.name FROM booth_potential_notes n
+    JOIN booths b ON b.id = n.booth_id WHERE n.event_id = ? ORDER BY n.updated_at`).all(eventId);
+  const byAttendee = {};
+  for (const n of notes) (byAttendee[n.attendee_id] = byAttendee[n.attendee_id] || []).push({ name: n.name, note: n.note || '', is_potential: !!n.is_potential });
+  return rows.map(r => ({ ...r, potential_notes: byAttendee[r.id] || [] }));
+}
+
 async function blockViewOnlyReport(req, res, ev) {
   if (req.user.role !== 'checkin') return false;
   const mine = await getAssignment(req.user, ev.id);
@@ -1008,7 +1053,8 @@ router.get('/events/:id/report', requireLogin, async (req, res) => {
   if (await blockViewOnlyReport(req, res, ev)) return;
   let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
-  rows = (await attachBoothVisits(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
+  rows = await attachBoothVisits(ev.id, rows);
+  rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
   const total = rows.length;
   const checkedin = rows.filter(r => r.checked_in_at).length;
   const walkin = rows.filter(r => r.is_walkin).length;
@@ -1024,6 +1070,11 @@ router.get('/events/:id/report/export', requireLogin, async (req, res) => {
   let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
   rows = await attachBoothVisits(ev.id, rows);
+  rows = await attachPotentialNotes(ev.id, rows);
+  // Lọc theo ngưỡng số booth tối thiểu đã ghé - dùng cho xuất danh sách đủ điều kiện quay số lucky draw.
+  // Ngưỡng gõ mỗi lần trên UI, KHÔNG lưu cấu hình cố định theo sự kiện (mỗi sự kiện số booth khác nhau).
+  const minBooths = Number(req.query.min_booths) || 0;
+  if (minBooths > 0) rows = rows.filter(r => r.booth_visits.length >= minBooths);
   const data = rows.map(r => ({
     'Xưng hô': r.salutation, 'Họ và tên': r.name, 'Email': r.email, 'Số điện thoại': r.phone,
     'Chức vụ': r.position, 'Mức độ quan trọng': r.importance,
@@ -1035,15 +1086,18 @@ router.get('/events/:id/report/export', requireLogin, async (req, res) => {
     'Booth đã ghé': r.booth_visits.map(v => `${v.name} (${fmtVN(v.visited_at)})`).join('; '),
     'Số booth đã ghé': r.booth_visits.length,
     'Ghi chú giám sát (theo booth)': r.booth_visits.filter(v => v.note).map(v => `${v.name}: ${v.note}`).join(' | '),
+    'Khách hàng tiềm năng': r.potential_notes.some(n => n.is_potential) ? 'Có' : 'Không',
+    'Ghi chú tiềm năng (giám sát)': r.potential_notes.filter(n => n.note).map(n => `${n.name}: ${n.note}`).join(' | '),
     'Khách vãng lai': r.is_walkin ? 'Có' : '',
     'Đã gửi email xác nhận': r.confirm_email_sent_at ? 'Có' : 'Không',
   }));
   const ws = XLSX.utils.json_to_sheet(data);
-  ws['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 15 }, { wch: 30 }, { wch: 13 }, { wch: 26 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 50 }, { wch: 13 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 15 }, { wch: 30 }, { wch: 13 }, { wch: 26 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 50 }, { wch: 15 }, { wch: 50 }, { wch: 13 }, { wch: 20 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'BaoCao');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Disposition', `attachment; filename="bao-cao-su-kien-${ev.id}.xlsx"`);
+  const filename = minBooths > 0 ? `du-dieu-kien-quay-so-su-kien-${ev.id}.xlsx` : `bao-cao-su-kien-${ev.id}.xlsx`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buf);
 });
 

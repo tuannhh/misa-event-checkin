@@ -12,6 +12,14 @@ const tabComponents = {
   attendees: defineAsyncComponent(() => import('./tabs/AttendeesTab.vue')),
   booths: defineAsyncComponent(() => import('./tabs/BoothsTab.vue')),
   staff: defineAsyncComponent(() => import('./tabs/StaffTab.vue')),
+  scan: defineAsyncComponent(() => import('./tabs/ScanTab.vue')),
+  pair: defineAsyncComponent(() => import('./tabs/PairTab.vue')),
+  reception: defineAsyncComponent(() => import('./tabs/ReceptionTab.vue')),
+  badges: defineAsyncComponent(() => import('./tabs/BadgesTab.vue')),
+  email: defineAsyncComponent(() => import('./tabs/EmailTab.vue')),
+  report: defineAsyncComponent(() => import('./tabs/ReportTab.vue')),
+  monitor: defineAsyncComponent(() => import('./tabs/MonitorTab.vue')),
+  dashboard: defineAsyncComponent(() => import('./tabs/DashboardTab.vue')),
 };
 
 const props = defineProps({ id: [String, Number], tab: String });

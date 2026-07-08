@@ -18,7 +18,9 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'event-checkin-secret-2026',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 12 * 60 * 60 * 1000, secure: IS_CLOUD }, // đăng nhập giữ 12 tiếng
+  // 'auto': cookie chỉ đặt secure khi kết nối là HTTPS (nhờ trust proxy đọc X-Forwarded-Proto).
+  // Nhờ vậy chạy được cả sau proxy HTTPS (cloud/nội bộ) lẫn HTTP trực tiếp (Docker nội bộ/test).
+  cookie: { maxAge: 12 * 60 * 60 * 1000, secure: 'auto' }, // đăng nhập giữ 12 tiếng
 }));
 
 app.use('/api', require('./routes/api'));

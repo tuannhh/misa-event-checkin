@@ -388,8 +388,20 @@ Mục tiêu: đưa app về đúng chuẩn stack MISA. **Giữ backend Node/Expr
 - ✅ **GĐ0 Backend MySQL** — xong, đã commit `ffd4c53`. Test 14 + 14 kịch bản pass trên MySQL (script ở `/tmp/checkintest/test.mjs`, `test2.mjs`).
 - ✅ **GĐ1 Frontend nền** — xong, đã commit. Gồm: `LoginView`, `App.vue` (shell topbar+nav), `EventsView` (CRUD sự kiện + điều kiện tham dự), `MembersView`, `SmtpView`, `EventDetailView` (khung tabs + placeholder). Verify qua preview: đăng nhập + tạo sự kiện → MySQL OK.
 - ✅ **GĐ2 xong** (2026-07-08) — 3 tab quản trị đã nối vào `EventDetailView.vue` qua `tabComponents` (dynamic `defineAsyncComponent` map: `attendees`/`booths`/`staff`), render bằng `<component :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />`; tab chưa làm giữ placeholder. File: `web/src/lib/print.js` (in tem 50×50), `web/src/components/AttendeeFields.vue`, `web/src/views/tabs/{BoothsTab,AttendeesTab,StaffTab}.vue`. Các tab **tự load dữ liệu** trong `onMounted` (không cần `@reload`; vẫn để `@reload` phòng sau này). Verify qua preview: 3 tab render OK, tạo booth "Booth AI - MISA AMIS" → ghi MySQL + re-render OK, 0 lỗi console.
-- ⏳ **GĐ3–4 còn lại (chưa làm):** các tab `scan` (QR camera html5-qrcode), `reception`, `pair` (gán thẻ), `badges` (kho phôi), `email` (soạn 2 chế độ + upload ảnh + preview), `report`, `monitor`, `dashboard`. Tham chiếu logic từ bản vanilla `public/app.js` trên nhánh main.
-- ⏳ **GĐ5:** build Vue (`cd web && npm run build`), Docker hóa (Dockerfile.internal cần bỏ python/g++ vì mysql2 pure JS + thêm service MySQL vào compose), gỡ `better-sqlite3` khỏi package.json, bàn giao.
+- ✅ **GĐ3–4 xong** (2026-07-08) — đã port toàn bộ 8 tab còn lại sang Vue, nối vào `EventDetailView.tabComponents`:
+  - `scan` (`ScanTab.vue`) + `pair` (`PairTab.vue`): camera html5-qrcode qua composable dùng chung `web/src/lib/scanner.js` (`useScanner` tự start onMounted / stop onBeforeUnmount + `vibrate`). ScanTab xử lý đủ 11 status của `/scan`, chọn vị trí cổng/booth (localStorage), auto-confirm, khách vãng lai. PairTab: lookup → pair (xử lý `duplicate` 409 → confirm → force), ngừng/dùng lại thẻ.
+  - `reception` (`ReceptionTab.vue`): danh sách toàn bộ khách + tìm kiếm + check-in tay + in tem + vãng lai (tự in tem).
+  - `badges` (`BadgesTab.vue`): sinh phôi, tải ZIP SVG (thẻ `<a download>`), 4 tile thống kê, lọc, ngừng/dùng lại.
+  - `email` (`EmailTab.vue`): dùng `BodyEditor.vue` (2 chế độ text/HTML, helper ở `web/src/lib/emailBody.js` gồm `SUGGEST`), upload ảnh header/footer (multipart), slider độ rộng, xem trước (`<iframe srcdoc>`).
+  - `report` (`ReportTab.vue`): 5 tile, lượt ghé booth, lọc, ghi chú giám sát theo booth, xuất Excel (`<a download>`), sửa nhanh.
+  - `monitor` (`MonitorTab.vue`): ghi chú booth cho supervisor.
+  - `dashboard` (`DashboardTab.vue`): số liệu ẩn danh từ `/stats`, chip lọc (trong chiều OR / giữa chiều AND), hero tỷ lệ, tỷ trọng drill-down. **Không dùng MChart/echarts** — tự vẽ thanh bar bằng CSS (nên echarts không bị bundle).
+  - Verify qua preview + Docker: tất cả tab render, tạo booth/khách/check-in → MySQL, Email save + suggest, Dashboard lọc VIP → 100% đúng, 0 lỗi console.
+- ✅ **GĐ5 xong** (2026-07-08) — Docker hóa nội bộ (MySQL):
+  - `Dockerfile.internal` viết lại **đa tầng**: tầng 1 `node:20-slim` build Vue (`web/` → `/public-vue`), tầng 2 chạy Node — **bỏ python/make/g++** (mysql2 thuần JS). Ảnh tự chứa, không phụ thuộc bản build sẵn trên máy.
+  - `docker-compose.internal.yml`: thêm service **`mysql` (pin `mysql:8.0`)** + healthcheck + `app` `depends_on: service_healthy`, truyền `DB_HOST=mysql DB_PORT=3306 ...`. 2 volume `checkin-mysql` (DB) + `checkin-data` (uploads).
+  - Gỡ `better-sqlite3` khỏi `package.json` (chỉ còn trong comment). `.dockerignore` loại `web/node_modules`, `public-vue`.
+  - Test thật: `docker compose -f docker-compose.internal.yml up -d --build` → MySQL healthy, app seed super admin, đăng nhập UI qua HTTP OK, tạo sự kiện + khách + check-in + Dashboard đều chạy trên container. 0 lỗi console.
 
 ### Môi trường dev (cách chạy lại sau khi clear/khởi động lại máy)
 ```bash
@@ -406,7 +418,19 @@ Preview (Claude Code): launch config `misa-checkin-web` (port 5173) đã có tro
 ### Lưu ý kỹ thuật đã gặp
 - `MDialog` (MDS): mặc định `type='default'` chỉ 1 nút và nút đó CHÍNH là `@confirm`. Muốn nút "Lưu" + có "Hủy" → đặt `type="confirm" confirm-text="Lưu"`.
 - MDS components dùng Tailwind → `web/tailwind.config.js` phải quét cả `src/components/mds`.
-- Chưa gỡ `better-sqlite3` khỏi package.json (không còn dùng) — gỡ ở GĐ5.
+- ✅ Đã gỡ `better-sqlite3` khỏi package.json ở GĐ5.
+- **Trình biên dịch Vue KHÔNG cho phép `{{` lồng trong biểu thức nội suy** (VD hiển thị chữ `{{ho_ten}}` bằng `{{ '{{ho_ten}}' }}` → lỗi "Unterminated string constant"). Cách làm: đưa các chuỗi biến vào `script` (mảng) rồi render `<code v-for>`.
+- **Session cookie**: đổi từ `secure: IS_CLOUD` → `secure: 'auto'` (server.js). 'auto' + `trust proxy` = tự bật secure khi HTTPS, tắt khi HTTP → chạy được cả sau proxy HTTPS lẫn HTTP trực tiếp (Docker nội bộ). Trước đây `NODE_ENV=production` ép secure=true làm hỏng đăng nhập khi truy cập qua HTTP.
+- **Docker MySQL**: `mysql:8` giờ trỏ 8.4 đã **bỏ** tuỳ chọn `--default-authentication-plugin` → container chết. Phải pin `mysql:8.0`.
+
+### Chạy bằng Docker (hạ tầng nội bộ, đã test)
+```bash
+docker compose -f docker-compose.internal.yml up -d --build   # dựng cả MySQL + app
+docker compose -f docker-compose.internal.yml logs -f app
+docker compose -f docker-compose.internal.yml down             # giữ dữ liệu
+docker compose -f docker-compose.internal.yml down -v          # xoá luôn dữ liệu
+```
+App ở http://localhost:3000. Super admin seed sẵn: tuanbui88vn@gmail.com / SocTho0607!9@@.
 
 ## 11. Quy tắc cập nhật file này
 

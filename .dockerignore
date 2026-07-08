@@ -1,5 +1,9 @@
 node_modules
+web/node_modules
+public-vue
 data
 .git
 *.log
 _test*.log
+MISA-Event-Checkin-Presentation.*
+~$*

@@ -47,9 +47,15 @@ a { color: var(--mds-brand-600, #245FDF); }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .page-head h2 { font-size: 20px; font-weight: 700; margin: 0; }
 .muted { color: #6b7280; }
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+/* MSelect/MInput tự rộng 100% (class "w-full" của MDS) - trong .toolbar (flex) cần bọc 1 khối
+   có độ rộng cố định để các ô lọc đều nhau, không bị vỡ dòng thành từng khối cao thấp riêng lẻ. */
+.toolbar-select { flex: 0 0 auto; width: 180px; }
+@media (max-width: 640px) { .toolbar-select { width: 100%; } }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 @media (max-width: 640px) { .row2 { grid-template-columns: 1fr; } }
 label.fld { display: block; font-weight: 600; margin: 12px 0 5px; font-size: 13px; }
 /* Nhóm nút thao tác trong ô bảng: luôn có khoảng cách đều nhau */
 .cell-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Tên + nhãn (MTag) đi liền nhau trong ô bảng: thêm khoảng thở, tránh chữ dính sát khối màu */
+.name-tags { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }

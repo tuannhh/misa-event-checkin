@@ -84,8 +84,10 @@ async function onImport(e) {
           <td>{{ u.email }}</td>
           <td><MTag :color="roleColor(u.role)">{{ ROLE_NAMES[u.role] || u.role }}</MTag></td>
           <td style="white-space:nowrap;text-align:right">
-            <MButton v-if="u.role !== 'super_admin' || auth.user.id === u.id" variant="secondary" size="md" @click="openEdit(u)">✏️</MButton>
-            <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" @click="del(u)">✕</MButton>
+            <span class="cell-actions" style="justify-content:flex-end">
+              <MButton v-if="u.role !== 'super_admin' || auth.user.id === u.id" variant="secondary" size="md" @click="openEdit(u)">Sửa</MButton>
+              <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" @click="del(u)">✕</MButton>
+            </span>
           </td>
         </tr>
       </tbody>

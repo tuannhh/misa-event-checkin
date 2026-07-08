@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1909.423828125" height="640" viewBox="0 0 1909.423828125 640" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+     <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+       <stop offset="0%" stop-color="#4CD964" />
+       <stop offset="100%" stop-color="#1BA645" />
+     </linearGradient>
+  </defs>
+  
+  <g transform="translate(64, 64)">
+     <path d="M 256,512 C 200,512 160,512 125.75,503.75 C 91.5,495.5 66.5,482.5 48.25,463.75 C 29.5,445.5 16.5,420.5 8.25,386.25 C 0,352 0,312 0,256 C 0,200 0,160 8.25,125.75 C 16.5,91.5 29.5,66.5 48.25,48.25 C 66.5,29.5 91.5,16.5 125.75,8.25 C 160,0 200,0 256,0 C 312,0 352,0 386.25,8.25 C 420.5,16.5 445.5,29.5 463.75,48.25 C 482.5,66.5 495.5,91.5 503.75,125.75 C 512,160 512,200 512,256 C 512,312 512,352 503.75,386.25 C 495.5,420.5 482.5,445.5 463.75,463.75 C 445.5,482.5 420.5,495.5 386.25,503.75 C 352,512 312,512 256,512 Z" fill="url(#bgGradient)" />
+     <g transform="translate(102.4, 102.4) scale(0.6)" fill="#FFFFFF">
+        
+  <path fill="#FFFFFF" d="M48 48v144h144V48H48zm112 112H80V80h80v80zM320 48v144h144V48H320zm112 112h-80V80h80v80zM48 320v144h144V320H48zm112 112H80v-80h80v80z"/>
+  <path fill="#FFFFFF" d="M190 290l65 65 195-195 34 34-229 229-99-99 34-34z"/>
+  <rect fill="#FFFFFF" x="320" y="380" width="36" height="84" />
+  <rect fill="#FFFFFF" x="388" y="330" width="36" height="134" />
+  <rect fill="#FFFFFF" x="456" y="270" width="36" height="194" />
+
+     </g>
+  </g>
+  
+  <text x="656" y="310" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="120" fill="#000000" dominant-baseline="alphabetic">MISA Check-in</text>
+  <text x="656" y="390" font-family="Arial, Helvetica, sans-serif" font-weight="normal" font-size="60" fill="#000000">Hệ thống Check-in sự kiện chuyên nghiệp</text>
+</svg>

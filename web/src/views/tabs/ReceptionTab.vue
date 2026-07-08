@@ -55,7 +55,7 @@ async function saveWalkin() {
       <thead><tr><th>Họ và tên</th><th>Công ty</th><th>Chức vụ</th><th>Check-in</th><th></th></tr></thead>
       <tbody>
         <tr v-for="r in filtered" :key="r.id">
-          <td><b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b> <MTag v-if="r.is_walkin" color="warning" size="sm">Vãng lai</MTag></td>
+          <td><span class="name-tags"><b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b><MTag v-if="r.is_walkin" color="warning" size="sm">Vãng lai</MTag></span></td>
           <td>{{ r.company }}</td><td>{{ r.position }}</td>
           <td><MTag v-if="r.checked_in_at" color="success" size="sm">✓ {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
           <td style="white-space:nowrap;text-align:right">

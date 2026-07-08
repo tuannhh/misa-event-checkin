@@ -20,7 +20,7 @@ async function load() { d.value = await api(`/events/${props.ev.id}/report`); }
 onMounted(load);
 
 const exportUrl = computed(() => `/api/events/${props.ev.id}/report/export`);
-const opt = (arr) => [{ value: '', label: 'Tất cả' }, ...(arr || []).map(v => ({ value: v, label: v }))];
+const opt = (arr, allLabel) => [{ value: '', label: allLabel }, ...(arr || []).map(v => ({ value: v, label: v }))];
 const pct = (n, dd) => (dd ? Math.round(n / dd * 100) : 0);
 
 const filtered = computed(() => (d.value?.rows || []).filter(r =>
@@ -64,9 +64,10 @@ async function save() {
 
     <div class="toolbar">
       <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="🔍 Tìm theo tên, SĐT, công ty, email..." clearable /></div>
-      <MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'in', label: 'Đã check-in' }, { value: 'out', label: 'Chưa check-in' }]" />
-      <MSelect v-model="fImp" :options="opt(d.importances)" />
-      <MSelect v-model="fPos" :options="opt(d.positions)" />
+      <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'in', label: 'Đã check-in' }, { value: 'out', label: 'Chưa check-in' }]" /></div>
+      <div class="toolbar-select"><MSelect v-model="fImp" :options="opt(d.importances, 'Tất cả mức độ')" /></div>
+      <div class="toolbar-select"><MSelect v-model="fPos" :options="opt(d.positions, 'Tất cả chức vụ')" /></div>
+      <div class="toolbar-select"><MSelect v-model="fSize" :options="opt(d.company_sizes, 'Tất cả quy mô')" /></div>
       <a class="lnk-btn" :href="exportUrl" download>⬇ Xuất Excel</a>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.rows.length }}</b> người</div>
@@ -80,9 +81,11 @@ async function save() {
         <tbody>
           <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
             <td>
-              <b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b>
-              <MTag v-if="r.is_walkin" color="warning" size="sm">Vãng lai</MTag>
-              <MTag v-if="!r.eligible" color="danger" size="sm">Không đủ ĐK</MTag>
+              <span class="name-tags">
+                <b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b>
+                <MTag v-if="r.is_walkin" color="warning" size="sm">Vãng lai</MTag>
+                <MTag v-if="!r.eligible" color="danger" size="sm">Không đủ ĐK</MTag>
+              </span>
             </td>
             <td><MTag :color="impColor(r.importance)" size="sm">{{ r.importance || 'Bình thường' }}</MTag></td>
             <td>{{ r.phone }}</td><td>{{ r.company }}</td>
@@ -105,7 +108,7 @@ async function save() {
             <td>{{ r.checked_in_by_name || '' }}</td>
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
               <span class="cell-actions" style="justify-content:flex-end">
-                <MButton variant="secondary" size="md" @click="openEdit(r)">✏️</MButton>
+                <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
                 <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r)">🖨</MButton>
               </span>
             </td>

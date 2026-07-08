@@ -63,7 +63,7 @@ async function setStatus(b, status) {
 
     <div class="toolbar">
       <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="🔍 Tìm mã phôi hoặc tên khách..." clearable /></div>
-      <MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả' }, { value: 'paired', label: 'Đã gán' }, { value: 'unpaired', label: 'Phôi trắng' }, { value: 'stopped', label: 'Đã ngừng' }]" />
+      <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'paired', label: 'Đã gán' }, { value: 'unpaired', label: 'Phôi trắng' }, { value: 'stopped', label: 'Đã ngừng' }]" /></div>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.total }}</b> phôi</div>
 

@@ -121,7 +121,7 @@ async function save() {
           <MTag color="success">{{ ev.total_checkedin }} check-in</MTag>
         </template>
         <MTag :color="statusOf(ev).color">{{ statusOf(ev).text }}</MTag>
-        <MButton v-if="!isStaff" variant="secondary" size="md" @click="openEdit(ev)">✏️</MButton>
+        <MButton v-if="!isStaff" variant="secondary" size="md" @click="openEdit(ev)">Sửa</MButton>
         <MButton v-if="locked(ev)" variant="secondary" size="md" disabled>🔒 Khoá</MButton>
         <MButton v-else variant="primary" size="md" @click="openEvent(ev)">{{ openBtnText(ev) }}</MButton>
       </div>

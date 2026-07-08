@@ -149,6 +149,9 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 ### `booth_visits` — hành trình khách ghé từng booth
 `id, event_id, booth_id, attendee_id, visited_at, visited_by, note` — UNIQUE `(booth_id, attendee_id)`. `note` do `supervisor` ghi (nhu cầu đặc biệt của khách tại booth đó).
 
+### `booth_potential_notes` — ghi chú "giám sát bóng ma" (bản `rewrite-vue-mysql`, chỉ có ở nhánh này)
+`id, event_id, booth_id, attendee_id, note, is_potential, updated_by` — UNIQUE `(booth_id, attendee_id)`. **Tách hoàn toàn khỏi `booth_visits`** — giám sát viên tra khách bằng mã thẻ (không quét) nên dòng ở đây KHÔNG được tính vào số booth đã ghé (lucky draw). Xem mục 9.15, 15.2.
+
 ### `smtp_settings` (singleton, `id=1`)
 `host, port, secure, smtp_user, smtp_pass, from_name, brevo_api_key, sender_email`. Brevo ưu tiên nếu có key.
 
@@ -186,6 +189,7 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 ### Booth & giám sát
 - `POST /api/events/:id/booths`, `DELETE /api/booths/:id` (xoá kèm clear `booth_id` liên quan)
 - `GET /api/events/:id/booth-monitor` (supervisor xem khách ghé booth mình) · `PUT /api/events/:id/booth-note`
+- **(bản `rewrite-vue-mysql`)** `GET /api/events/:id/booth-monitor/lookup?code=` — "giám sát bóng ma": tra khách bằng mã thẻ (không cần đã ghé booth mình), chỉ dùng được khi sự kiện có phôi thẻ · `PUT .../booth-monitor/potential-note` `{attendee_id, note, is_potential}` — lưu vào `booth_potential_notes`, TÁCH biệt `booth_visits`
 
 ### Email
 - `GET/PUT /api/events/:id/email-settings`
@@ -205,6 +209,7 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 
 ### Báo cáo & số liệu
 - `GET /api/events/:id/report` / `GET /api/events/:id/report/export` (Excel) — **chặn** `supervisor`/`manager` (có PII)
+- **(bản `rewrite-vue-mysql`)** `report/export` nhận thêm query `?min_booths=N` — lọc xuất riêng danh sách đủ điều kiện lucky draw (không lưu ngưỡng, gõ lại mỗi lần)
 - `GET /api/events/:id/stats` — vector ẩn danh (không tên/email/SĐT), dùng cho dashboard `manager`
 
 ### Khác
@@ -369,6 +374,11 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     4. **Bộ lọc select vỡ dòng**: `.toolbar-select { width: 180px; flex: 0 0 auto; }` để các ô lọc nằm cùng hàng, đều kích thước. Thêm `.name-tags { gap: 6px; }` cho tên + tag đi kèm (Vãng lai/Không đủ ĐK).
     5. **Cột "Mức độ" (importance) bị wrap**: thêm `white-space:nowrap` vào `<td>` để tag VIP/VVIP/... giữ trên 1 dòng.
     - **Verify:** preview (Vite) + Docker, chụp màn hình: logo cân đối, tile/select đều hàng, mức độ 1 dòng, 0 lỗi console. Commit `10e0e35` (ui polish) → `0eb8c9f` (memorybank) → `c4f992a` (logo+report fix) + push `rewrite-vue-mysql`.
+15. **Giám sát "bóng ma" + Lucky draw filter/export** (2026-07-08, commit `ddaf920`) — triển khai 2 quyết định nghiệp vụ đã chốt cùng ngày (mục 15.2, 15.3):
+    - Bảng mới `booth_potential_notes` (tách hoàn toàn khỏi `booth_visits`) lưu ghi chú + tick "khách hàng tiềm năng" của giám sát viên khi tra khách bằng mã thẻ in sẵn — không làm sai lệch số booth đã ghé dùng cho lucky draw.
+    - API `GET/PUT .../booth-monitor/lookup` và `.../booth-monitor/potential-note`, guard bằng `resolveMonitorBooth` (không phải `badgeOpGuard`) để giám sát viên (`VIEW_ONLY_TYPES`) vẫn tra được dù bị chặn thao tác thẻ ở nơi khác. Chỉ bật cho sự kiện có phôi thẻ (`badge_count>0`).
+    - `GET /report/export` nhận thêm `min_booths` để xuất riêng danh sách đủ điều kiện quay số; ngưỡng không lưu cấu hình, gõ lại mỗi lần trên UI Báo cáo — vì mỗi sự kiện có số booth khác nhau.
+    - **Verify:** Docker (MySQL) + preview, dựng dữ liệu demo (booth, phôi thẻ, gán thẻ, quét booth), test tra mã thẻ → đúng khách, lưu ghi chú không tạo dòng `booth_visits` mới, lọc + xuất Excel đúng người/đúng cột, 0 lỗi console.
 
 ---
 
@@ -378,7 +388,8 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
-- [ ] **Giám sát "bóng ma" + Lucky draw + Deploy GCE** (2026-07-08, đã trao đổi & CHỐT phương án, CHƯA CODE) — xem chi tiết đầy đủ ở mục 15 bên dưới. Làm trên nhánh `rewrite-vue-mysql` (bản Vue+MySQL), không đụng bản Cloud Run cũ (SQLite/vanilla).
+- [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
+- [ ] **Deploy GCE VM** (bản Vue+MySQL, để test môi trường thật) — phương án đã chốt ở mục 15.4, CHƯA triển khai. Làm trên nhánh `rewrite-vue-mysql`, không đụng bản Cloud Run cũ (SQLite/vanilla).
 
 ---
 
@@ -403,12 +414,16 @@ Chủ dự án tưởng thiếu 4 vai trò (Lễ tân/Giám sát/Quản lý/Qué
 - Hệ quả thiết kế: cần bảng/cơ chế lưu riêng cho "ghi chú giám sát tiềm năng" (không tái dùng thẳng `booth_visits.note` như hiện tại — cần tách cột `is_potential` + note khỏi luồng hành trình, hoặc thêm bảng mới `booth_potential_notes` độc lập, quyết định cụ thể khi thiết kế).
 - Phạm vi áp dụng: tính năng gõ-mã-thẻ chỉ dùng được cho **sự kiện có in phôi thẻ** (cần số in trên thẻ). Sự kiện không dùng phôi → giám sát viên vẫn tra cứu bằng cách tìm tên như hiện tại (không có mã thẻ để gõ).
 
+**✅ Đã code (2026-07-08, commit `ddaf920`):** bảng `booth_potential_notes` (event_id, booth_id, attendee_id, note, is_potential — khoá `(booth_id, attendee_id)`, tách hoàn toàn khỏi `booth_visits`). API `GET /events/:id/booth-monitor/lookup?code=` (tái dùng `resolveAttendee`/`findBadge`, guard bằng `resolveMonitorBooth` để supervisor tra được — không dùng `badgeOpGuard` vì hàm đó chặn `VIEW_ONLY_TYPES`) + `PUT /events/:id/booth-monitor/potential-note` (upsert `ON DUPLICATE KEY UPDATE`). Chỉ bật khi `badge_count>0`. UI: khối "🕵️ Tra cứu bóng ma" trong `MonitorTab.vue` (ô nhập mã + kết quả + ghi chú + tick tiềm năng). Report/export có thêm 2 cột "Khách hàng tiềm năng" + "Ghi chú tiềm năng (giám sát)" qua `attachPotentialNotes()`.
+
 ### 15.3 Lucky Draw — lọc khách đủ điều kiện quay số
 - **Yêu cầu gốc:** sự kiện có N booth, khách phải ghé tối thiểu X booth mới đủ điều kiện quay số (VD 10 booth, cần ≥8).
 - **Đã có sẵn ~90%:** `booth_visits` đã ghi khách nào ghé booth nào; báo cáo + Excel export đã có cột "Số booth đã ghé" (mục 4, endpoint `/report`, `attachBoothVisits()`).
 - **Cần bổ sung:** UI lọc trên tab Báo cáo theo **số booth tối thiểu đã ghé** (VD gõ "≥8") + xuất Excel riêng danh sách đủ điều kiện.
 - **Chốt quan trọng:** ngưỡng số booth **KHÔNG lưu cấu hình cố định theo sự kiện** — để người dùng **tự gõ ngưỡng mỗi lần lọc** trên UI báo cáo, vì mỗi sự kiện có số booth/tiêu chí khác nhau, không nên fix cứng.
 - **Đầu ra:** chỉ cần **xuất Excel danh sách đủ điều kiện** — chủ dự án tự đưa sang ứng dụng quay số bên ngoài. KHÔNG cần làm tính năng bốc số ngẫu nhiên trong app này.
+
+**✅ Đã code (2026-07-08, commit `ddaf920`):** `GET /events/:id/report/export` nhận thêm query `min_booths` — lọc `rows` theo `booth_visits.length >= min_booths` trước khi build Excel, đổi tên file tải về thành `du-dieu-kien-quay-so-su-kien-{id}.xlsx` khi có lọc (phân biệt với file báo cáo đầy đủ). UI ở `ReportTab.vue`: ô nhập số "khách ghé tối thiểu" (không lưu, gõ lại mỗi lần — đúng chốt) + nút xuất riêng. Lọc hiển thị trên màn hình là 100% frontend (đã có `booth_visits` sẵn trong `/report`).
 
 ### 15.4 Deploy bản Vue+MySQL lên môi trường thật để test — dùng GCE VM
 - **Đã chốt phương án:** dựng **1 Google Compute Engine (GCE) VM**, chạy đúng `docker-compose.internal.yml` đã test kỹ trên Docker local (app + MySQL trong cùng VM). KHÔNG dùng Cloud Run cho bản này (Cloud Run stateless, cần tách MySQL ra dịch vụ ngoài — phức tạp/tốn hơn cho nhu cầu "chỉ để test").
@@ -418,7 +433,8 @@ Chủ dự án tưởng thiếu 4 vai trò (Lễ tân/Giám sát/Quản lý/Qué
 - **Không đụng bản Cloud Run cũ** (SQLite/vanilla) — đây là service hoàn toàn tách biệt, phục vụ mục đích test bản mới song song.
 
 ### 15.5 Trạng thái
-Tất cả ở mục 15 này **CHƯA CODE** — mới dừng ở mức thống nhất phương án nghiệp vụ + kỹ thuật. Việc tiếp theo: thiết kế chi tiết schema (bảng ghi chú tiềm năng tách biệt), API, UI cho tab Giám sát (ô tìm mã thẻ + tick tiềm năng), UI lọc lucky draw ở Báo cáo, rồi mới triển khai GCE VM.
+- ✅ 15.2 (Giám sát bóng ma) và 15.3 (Lucky draw filter/export) **đã code + test xong** (2026-07-08, commit `ddaf920`, xem chi tiết ở mục 9.15).
+- ⏳ 15.4 (Deploy GCE VM) **CHƯA triển khai** — phương án hạ tầng đã chốt (sslip.io cho HTTPS, `gh` CLI đăng nhập trên VM để clone code), việc còn lại thuần tạo tài nguyên GCP thật (có phát sinh phí liên tục) nên cần xác nhận lại với chủ dự án trước khi tạo VM.
 
 ---
 

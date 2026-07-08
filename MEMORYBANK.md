@@ -422,6 +422,7 @@ Preview (Claude Code): launch config `misa-checkin-web` (port 5173) đã có tro
 - **Trình biên dịch Vue KHÔNG cho phép `{{` lồng trong biểu thức nội suy** (VD hiển thị chữ `{{ho_ten}}` bằng `{{ '{{ho_ten}}' }}` → lỗi "Unterminated string constant"). Cách làm: đưa các chuỗi biến vào `script` (mảng) rồi render `<code v-for>`.
 - **Session cookie**: đổi từ `secure: IS_CLOUD` → `secure: 'auto'` (server.js). 'auto' + `trust proxy` = tự bật secure khi HTTPS, tắt khi HTTP → chạy được cả sau proxy HTTPS lẫn HTTP trực tiếp (Docker nội bộ). Trước đây `NODE_ENV=production` ép secure=true làm hỏng đăng nhập khi truy cập qua HTTP.
 - **Docker MySQL**: `mysql:8` giờ trỏ 8.4 đã **bỏ** tuỳ chọn `--default-authentication-plugin` → container chết. Phải pin `mysql:8.0`.
+- **Thiếu alias token MDS**: bộ component MDS tham chiếu các biến ngữ nghĩa (`--mds-bg`, `--mds-border`, `--mds-text`, `--mds-text-placeholder`, `--mds-bg-hover-soft`, `--mds-bg-disabled`, `--mds-danger/info/success/warning`) nhưng bộ token `blue.css` KHÔNG định nghĩa (chỉ có `--mds-bg-white`, `--mds-stroke-neutral`...). Hậu quả: nền dropdown/input **trong suốt**, đè chữ bên dưới. Đã map alias ở `:root` trong `web/src/style.css`. Nếu thêm component MDS mới mà thấy nền/viền/màu chữ sai → kiểm tra alias còn thiếu.
 
 ### Chạy bằng Docker (hạ tầng nội bộ, đã test)
 ```bash

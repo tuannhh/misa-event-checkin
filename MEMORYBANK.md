@@ -149,6 +149,9 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 ### `booth_visits` — hành trình khách ghé từng booth
 `id, event_id, booth_id, attendee_id, visited_at, visited_by, note` — UNIQUE `(booth_id, attendee_id)`. `note` do `supervisor` ghi (nhu cầu đặc biệt của khách tại booth đó).
 
+### `booth_potential_notes` — ghi chú "giám sát bóng ma" (bản `rewrite-vue-mysql`, chỉ có ở nhánh này)
+`id, event_id, booth_id, attendee_id, note, is_potential, updated_by` — UNIQUE `(booth_id, attendee_id)`. **Tách hoàn toàn khỏi `booth_visits`** — giám sát viên tra khách bằng mã thẻ (không quét) nên dòng ở đây KHÔNG được tính vào số booth đã ghé (lucky draw). Xem mục 9.15, 15.2.
+
 ### `smtp_settings` (singleton, `id=1`)
 `host, port, secure, smtp_user, smtp_pass, from_name, brevo_api_key, sender_email`. Brevo ưu tiên nếu có key.
 
@@ -186,6 +189,7 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 ### Booth & giám sát
 - `POST /api/events/:id/booths`, `DELETE /api/booths/:id` (xoá kèm clear `booth_id` liên quan)
 - `GET /api/events/:id/booth-monitor` (supervisor xem khách ghé booth mình) · `PUT /api/events/:id/booth-note`
+- **(bản `rewrite-vue-mysql`)** `GET /api/events/:id/booth-monitor/lookup?code=` — "giám sát bóng ma": tra khách bằng mã thẻ (không cần đã ghé booth mình), chỉ dùng được khi sự kiện có phôi thẻ · `PUT .../booth-monitor/potential-note` `{attendee_id, note, is_potential}` — lưu vào `booth_potential_notes`, TÁCH biệt `booth_visits`
 
 ### Email
 - `GET/PUT /api/events/:id/email-settings`
@@ -205,6 +209,7 @@ Quan hệ **1 khách ↔ nhiều thẻ** (khách mất thẻ được gán thêm
 
 ### Báo cáo & số liệu
 - `GET /api/events/:id/report` / `GET /api/events/:id/report/export` (Excel) — **chặn** `supervisor`/`manager` (có PII)
+- **(bản `rewrite-vue-mysql`)** `report/export` nhận thêm query `?min_booths=N` — lọc xuất riêng danh sách đủ điều kiện lucky draw (không lưu ngưỡng, gõ lại mỗi lần)
 - `GET /api/events/:id/stats` — vector ẩn danh (không tên/email/SĐT), dùng cho dashboard `manager`
 
 ### Khác
@@ -332,6 +337,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 12. Web Bluetooth API không hỗ trợ trên Safari/iOS — máy in nhiệt Bluetooth kiểu CLab 221B (dùng app riêng, không ESC/POS công khai) không thể in trực tiếp từ web trên iPhone; xem quyết định ở mục 9 (2026-07-06). Đã thay bằng mô hình phôi thẻ in sẵn (mục 5.7) + in tem USB dự phòng.
 13. Mã QR trên phôi thẻ mã hoá `{eventId}-{code}` (không chỉ `{code}`) để chống nhầm chéo sự kiện khi 2 sự kiện có cùng số phôi. `findBadge()` trong api.js xử lý cả 2 dạng (QR có prefix eventId, và số gõ tay không prefix). Thứ tự resolve khi quét: thử `qr_token` của khách (hex 20 ký tự) trước, không thấy mới thử mã phôi.
 14. Cần `jszip` (dependency mới) để xuất ZIP bộ SVG phôi thẻ — dev chạy `npm install` là có.
+15. **UI Toolbar select bị vỡ dòng:** class `w-full` của MDS khiến MSelect tự vỡ xuống 1 dòng riêng trong `.toolbar` (flex) → dùng `.toolbar-select { width: 180px; flex: 0 0 auto; }` bọc quanh từng MSelect để cố định độ rộng và nằm cùng hàng. Thêm `.name-tags { gap: 6px; }` cho tên + MTag (Vãng lai/Không đủ ĐK) để chữ không dính khối màu.
 
 ---
 
@@ -361,6 +367,19 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Dự phòng khi hết phôi:** in tem QR của khách bằng máy in nhiệt **USB**, khổ **50×50mm**, dưới QR in "Tên - Công ty". Tem chứa mã khách → quét thẳng, không cần gán.
     - UI màn hình mới theo tinh thần MISA Design System nhưng **giữ tông màu #2563eb** hiện có (không viết lại app cũ) — theo lựa chọn của chủ dự án để an toàn trước khi bàn giao dev.
     - Đã test 14 kịch bản backend + kiểm tra UI qua preview (sinh phôi, gán thẻ, ngừng thẻ, xuất ZIP, quét resolve badge) — tất cả pass.
+14. **Sửa lỗi UI (2026-07-08)** — 6 lỗi hiển thị giao diện (bàn giao sau khi hoàn thành GĐ3-5):
+    1. **Logo**: thay chữ "🎟️ MISA Event Check-in" bằng logo SVG → 42px ở navbar, 64px ở màn hình đăng nhập (dễ đọc). **Lần 2 sửa (c4f992a)**: giảm viewBox từ 1909→900, tăng kích thước icon để icon + text cân đối nhau.
+    2. **Nút biểu tượng bút → nút "Sửa"**: thay `✏️` bằng chữ "Sửa" rõ ràng ở Events/Members/Report/Attendees.
+    3. **Nhãn filter mơ hồ**: thay "Tất cả" chung chung → "Tất cả trạng thái", "Tất cả mức độ", "Tất cả chức vụ", "Tất cả quy mô" để biết đang lọc theo gì mà không cần mở dropdown. Thêm luôn lọc "Quy mô nhân sự" ở ReportTab (trước đó có biến nhưng thiếu UI).
+    4. **Bộ lọc select vỡ dòng**: `.toolbar-select { width: 180px; flex: 0 0 auto; }` để các ô lọc nằm cùng hàng, đều kích thước. Thêm `.name-tags { gap: 6px; }` cho tên + tag đi kèm (Vãng lai/Không đủ ĐK).
+    5. **Cột "Mức độ" (importance) bị wrap**: thêm `white-space:nowrap` vào `<td>` để tag VIP/VVIP/... giữ trên 1 dòng.
+    - **Verify:** preview (Vite) + Docker, chụp màn hình: logo cân đối, tile/select đều hàng, mức độ 1 dòng, 0 lỗi console. Commit `10e0e35` (ui polish) → `0eb8c9f` (memorybank) → `c4f992a` (logo+report fix) + push `rewrite-vue-mysql`.
+15. **Giám sát "bóng ma" + Lucky draw filter/export** (2026-07-08, commit `ddaf920`) — triển khai 2 quyết định nghiệp vụ đã chốt cùng ngày (mục 15.2, 15.3):
+    - Bảng mới `booth_potential_notes` (tách hoàn toàn khỏi `booth_visits`) lưu ghi chú + tick "khách hàng tiềm năng" của giám sát viên khi tra khách bằng mã thẻ in sẵn — không làm sai lệch số booth đã ghé dùng cho lucky draw.
+    - API `GET/PUT .../booth-monitor/lookup` và `.../booth-monitor/potential-note`, guard bằng `resolveMonitorBooth` (không phải `badgeOpGuard`) để giám sát viên (`VIEW_ONLY_TYPES`) vẫn tra được dù bị chặn thao tác thẻ ở nơi khác. Chỉ bật cho sự kiện có phôi thẻ (`badge_count>0`).
+    - `GET /report/export` nhận thêm `min_booths` để xuất riêng danh sách đủ điều kiện quay số; ngưỡng không lưu cấu hình, gõ lại mỗi lần trên UI Báo cáo — vì mỗi sự kiện có số booth khác nhau.
+    - **Verify:** Docker (MySQL) + preview, dựng dữ liệu demo (booth, phôi thẻ, gán thẻ, quét booth), test tra mã thẻ → đúng khách, lưu ghi chú không tạo dòng `booth_visits` mới, lọc + xuất Excel đúng người/đúng cột, 0 lỗi console.
+16. **Deploy bản Vue+MySQL lên GCE VM để test môi trường thật** (2026-07-08/09) — thực hiện phương án đã chốt ở mục 15.4: tạo VM `misa-checkin-test` (project `prapplication-479309`), cài Docker + `gh` CLI, clone `rewrite-vue-mysql` qua `gh auth login` (không dùng PAT), thêm Caddy + domain tạm **sslip.io** để có HTTPS thật (Let's Encrypt) mà không cần mua domain. Chạy bằng `docker-compose.internal.yml` (đã có sẵn, không sửa) + `docker-compose.override.yml` riêng trên VM (SESSION_SECRET thật, BASE_URL, service Caddy — không commit vào repo vì gắn IP VM cụ thể). Đã verify đăng nhập + HTTPS hợp lệ qua https://34-87-20-119.sslip.io. Xem chi tiết vận hành (lệnh SSH, dừng/xoá VM) ở mục 15.4.
 
 ---
 
@@ -370,8 +389,138 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
+- [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
+- [x] ~~Deploy GCE VM~~ → đã triển khai (2026-07-08/09), https://34-87-20-119.sslip.io, xem mục 15.4. Đang chạy 24/7 — nhớ dừng VM (`gcloud compute instances stop`) khi ngừng test để khỏi tốn phí.
 
 ---
+
+## 15. QUYẾT ĐỊNH NGHIỆP VỤ ĐÃ CHỐT (2026-07-08) — chưa code, làm tiếp trên `rewrite-vue-mysql`
+
+> Nguồn: trao đổi trực tiếp với chủ dự án sau khi seed demo data + làm presentation giới thiệu sản phẩm. Ghi đầy đủ để AI/dev sau không phải hỏi lại.
+
+### 15.1 Làm rõ hiểu lầm "thiếu vai trò"
+Chủ dự án tưởng thiếu 4 vai trò (Lễ tân/Giám sát/Quản lý/Quét QR) vì nhìn nhầm ở form **"Thêm thành viên"** (tạo tài khoản hệ thống, chỉ có role gốc `super_admin`/`admin`/`checkin`). Thực ra 4 vai trò đó là **"Vai trò tại sự kiện"** (`event_staff.staff_type`), gán ở **tab Nhân viên bên trong từng sự kiện** — **đã có đủ** ở cả 2 bản (xem mục 5.4). Không cần sửa gì, chỉ cần hướng dẫn lại đúng chỗ bấm.
+
+### 15.2 Giám sát "bóng ma" (mở rộng `supervisor`) — tra cứu theo mã thẻ, tách khỏi hành trình lucky draw
+**Mô hình nghiệp vụ đúng** (khác giả định ban đầu của AI — đã sửa sau khi hỏi lại):
+- **Lễ tân tại booth**: vẫn quét QR/mã phôi của khách như cũ để **ghi nhận hành trình** (`booth_visits`) — **giữ nguyên, không đổi**.
+- **Giám sát viên** ("bóng ma"): KHÔNG giao tiếp khách, KHÔNG quét, chỉ **liếc thấy mã số in trên thẻ** (VD `0005`) khi khách đang trao đổi với sales → gõ mã vào ứng dụng → tra ra tên khách (VD "Bùi Minh Tuấn – CEO ABC") → ghi chú nhanh (VD "quan tâm phần mềm kế toán") + tick **"Khách hàng tiềm năng"** để sau sự kiện có nhân viên kinh doanh liên hệ lại.
+
+**Vì sao tra được mã thẻ dù khách chưa được lễ tân booth này quét:** mã thẻ (0005) được **gán cho khách ngay từ CỔNG** lúc khách vừa đến sự kiện (luồng phôi thẻ ở mục 5.7 — lễ tân cổng quét QR email + quét mã phôi → hệ thống map `0005 ↔ Bùi Minh Tuấn` cho **toàn sự kiện**, không phải riêng 1 booth). Nên giám sát viên ở bất kỳ booth nào gõ `0005` đều tra ra đúng khách ngay, không phụ thuộc việc lễ tân booth đó đã quét hay chưa.
+
+**Quyết định quan trọng — TÁCH 2 khái niệm:**
+1. **Hành trình ghé booth** (`booth_visits`, do lễ tân quét) → dùng để tính **số booth đã ghé cho lucky draw**.
+2. **Ghi chú + tick tiềm năng của giám sát viên** → lưu **tách biệt**, KHÔNG tự cộng vào số booth hành trình, KHÔNG ảnh hưởng điều kiện quay số.
+- Lý do: nếu gộp chung, giám sát note khách ở booth 3 sẽ vô tình làm khách "đủ điều kiện ghé booth 3" dù lễ tân chưa quét — sai lệch số liệu lucky draw.
+- Hệ quả thiết kế: cần bảng/cơ chế lưu riêng cho "ghi chú giám sát tiềm năng" (không tái dùng thẳng `booth_visits.note` như hiện tại — cần tách cột `is_potential` + note khỏi luồng hành trình, hoặc thêm bảng mới `booth_potential_notes` độc lập, quyết định cụ thể khi thiết kế).
+- Phạm vi áp dụng: tính năng gõ-mã-thẻ chỉ dùng được cho **sự kiện có in phôi thẻ** (cần số in trên thẻ). Sự kiện không dùng phôi → giám sát viên vẫn tra cứu bằng cách tìm tên như hiện tại (không có mã thẻ để gõ).
+
+**✅ Đã code (2026-07-08, commit `ddaf920`):** bảng `booth_potential_notes` (event_id, booth_id, attendee_id, note, is_potential — khoá `(booth_id, attendee_id)`, tách hoàn toàn khỏi `booth_visits`). API `GET /events/:id/booth-monitor/lookup?code=` (tái dùng `resolveAttendee`/`findBadge`, guard bằng `resolveMonitorBooth` để supervisor tra được — không dùng `badgeOpGuard` vì hàm đó chặn `VIEW_ONLY_TYPES`) + `PUT /events/:id/booth-monitor/potential-note` (upsert `ON DUPLICATE KEY UPDATE`). Chỉ bật khi `badge_count>0`. UI: khối "🕵️ Tra cứu bóng ma" trong `MonitorTab.vue` (ô nhập mã + kết quả + ghi chú + tick tiềm năng). Report/export có thêm 2 cột "Khách hàng tiềm năng" + "Ghi chú tiềm năng (giám sát)" qua `attachPotentialNotes()`.
+
+### 15.3 Lucky Draw — lọc khách đủ điều kiện quay số
+- **Yêu cầu gốc:** sự kiện có N booth, khách phải ghé tối thiểu X booth mới đủ điều kiện quay số (VD 10 booth, cần ≥8).
+- **Đã có sẵn ~90%:** `booth_visits` đã ghi khách nào ghé booth nào; báo cáo + Excel export đã có cột "Số booth đã ghé" (mục 4, endpoint `/report`, `attachBoothVisits()`).
+- **Cần bổ sung:** UI lọc trên tab Báo cáo theo **số booth tối thiểu đã ghé** (VD gõ "≥8") + xuất Excel riêng danh sách đủ điều kiện.
+- **Chốt quan trọng:** ngưỡng số booth **KHÔNG lưu cấu hình cố định theo sự kiện** — để người dùng **tự gõ ngưỡng mỗi lần lọc** trên UI báo cáo, vì mỗi sự kiện có số booth/tiêu chí khác nhau, không nên fix cứng.
+- **Đầu ra:** chỉ cần **xuất Excel danh sách đủ điều kiện** — chủ dự án tự đưa sang ứng dụng quay số bên ngoài. KHÔNG cần làm tính năng bốc số ngẫu nhiên trong app này.
+
+**✅ Đã code (2026-07-08, commit `ddaf920`):** `GET /events/:id/report/export` nhận thêm query `min_booths` — lọc `rows` theo `booth_visits.length >= min_booths` trước khi build Excel, đổi tên file tải về thành `du-dieu-kien-quay-so-su-kien-{id}.xlsx` khi có lọc (phân biệt với file báo cáo đầy đủ). UI ở `ReportTab.vue`: ô nhập số "khách ghé tối thiểu" (không lưu, gõ lại mỗi lần — đúng chốt) + nút xuất riêng. Lọc hiển thị trên màn hình là 100% frontend (đã có `booth_visits` sẵn trong `/report`).
+
+### 15.4 Deploy bản Vue+MySQL lên môi trường thật để test — dùng GCE VM
+- **Đã chốt phương án:** dựng **1 Google Compute Engine (GCE) VM**, chạy đúng `docker-compose.internal.yml` đã test kỹ trên Docker local (app + MySQL trong cùng VM). KHÔNG dùng Cloud Run cho bản này (Cloud Run stateless, cần tách MySQL ra dịch vụ ngoài — phức tạp/tốn hơn cho nhu cầu "chỉ để test").
+- **Project GCP dùng chung:** `prapplication-479309` (cùng project với Cloud Run bản cũ — công ty đã trả phí, có thể dùng cấu hình trả phí nếu cần, không cần tối ưu về 0 đồng).
+- **Quan trọng — đã giải thích rõ với chủ dự án:** GCE VM là máy chủ chạy **trên hạ tầng Google 24/7**, KHÔNG phải máy tính vật lý của chủ dự án — tắt máy cá nhân không ảnh hưởng, mọi người vẫn truy cập được qua internet.
+- **Không đụng bản Cloud Run cũ** (SQLite/vanilla) — đây là service hoàn toàn tách biệt, phục vụ mục đích test bản mới song song.
+
+**✅ Đã triển khai (2026-07-08/09):**
+- **Địa chỉ:** https://34-87-20-119.sslip.io — VM `misa-checkin-test`, zone `asia-southeast1-a`, machine type `e2-medium`, disk 30GB, image `ubuntu-2404-lts-amd64`, project `prapplication-479309`. IP ngoài (tĩnh theo VM, mất nếu xoá VM): `34.87.20.119`.
+- **HTTPS:** dùng domain tạm miễn phí **sslip.io** (`34-87-20-119.sslip.io` map thẳng ra IP) — **Caddy** (`caddy:2-alpine`, service `caddy` trong `docker-compose.override.yml` trên VM, KHÔNG commit vào repo vì gắn với IP VM cụ thể) tự xin chứng chỉ Let's Encrypt thật (HTTP-01 challenge qua port 80) và reverse-proxy vào `app:3000`. Đã xác nhận HTTP/2 + TLS hợp lệ, không cảnh báo trình duyệt.
+- **Firewall:** rule `allow-http-https` (ingress tcp:80,443, tag `http-server`/`https-server`) — tạo mới vì project trước đó chỉ có rule mặc định (ssh/rdp/icmp/internal).
+- **Git trên VM:** cài `gh` CLI, đăng nhập bằng tài khoản GitHub `tuannhh` qua browser-based device flow (`gh auth login --web`), sau đó `gh repo clone tuannhh/misa-event-checkin` (không dùng PAT cũ — giải quyết luôn việc treo ở mục 10 cho phần deploy này, PAT cũ vẫn cần soát lại riêng nếu còn dùng ở nơi khác).
+- **Lệnh chạy:** `sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml up -d --build` (2 file compose gộp: file gốc trong repo + file override chứa `SESSION_SECRET` ngẫu nhiên thật, `BASE_URL=https://34-87-20-119.sslip.io`, và service `caddy`). Docker đã `systemctl enable`, tất cả service có `restart: unless-stopped` → tự phục hồi khi VM khởi động lại.
+- **Quản lý VM:**
+  ```bash
+  # SSH vào VM (từ máy đã cài gcloud + đăng nhập đúng project):
+  ~/google-cloud-sdk/bin/gcloud compute ssh misa-checkin-test --zone=asia-southeast1-a
+  # Trên VM, thư mục misa-event-checkin/:
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml ps
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml logs -f app
+  sudo docker compose -f docker-compose.internal.yml -f docker-compose.override.yml down        # dừng, giữ dữ liệu
+  # Cập nhật code mới: git pull rồi chạy lại lệnh "up -d --build" ở trên.
+  # Dừng hẳn VM để khỏi tốn phí (khi không cần test nữa):
+  ~/google-cloud-sdk/bin/gcloud compute instances stop misa-checkin-test --zone=asia-southeast1-a
+  # Chạy lại (IP ngoài có thể đổi sau khi stop/start → phải sửa lại sslip.io domain trong Caddyfile + BASE_URL nếu IP đổi):
+  ~/google-cloud-sdk/bin/gcloud compute instances start misa-checkin-test --zone=asia-southeast1-a
+  ```
+- **Lưu ý chi phí:** VM `e2-medium` chạy 24/7 sẽ phát sinh phí GCP liên tục. Muốn ngừng tốn phí mà vẫn giữ dữ liệu → dùng `gcloud compute instances stop` (đĩa vẫn tính phí lưu trữ nhưng rẻ hơn nhiều so với instance chạy). Muốn xoá hẳn (mất dữ liệu MySQL/uploads trong VM) → `gcloud compute instances delete misa-checkin-test --zone=asia-southeast1-a`.
+- Super admin mặc định vẫn là `tuanbui88vn@gmail.com` (mật khẩu seed sẵn trong code) — **nên đổi mật khẩu** sau khi bắt đầu dùng thật trên VM này.
+
+### 15.5 Trạng thái
+- ✅ 15.2 (Giám sát bóng ma) và 15.3 (Lucky draw filter/export) **đã code + test xong** (2026-07-08, commit `ddaf920`, xem chi tiết ở mục 9.15).
+- ✅ 15.4 (Deploy GCE VM) **đã triển khai xong** (2026-07-08/09) — https://34-87-20-119.sslip.io, xem chi tiết vận hành ở mục 15.4. VM đang chạy 24/7 (phát sinh phí) — nhớ `gcloud compute instances stop` khi không cần test nữa.
+- Toàn bộ mục 15 đã hoàn tất phần "chưa code" ghi nhận ngày 2026-07-08.
+
+---
+
+## 12. ĐANG THỰC HIỆN: Viết lại Vue 3 + Tailwind + MySQL (nhánh `rewrite-vue-mysql`)
+
+Mục tiêu: đưa app về đúng chuẩn stack MISA. **Giữ backend Node/Express** (tái dùng logic), đổi 2 tầng: giao diện → Vue 3, dữ liệu → MySQL. Làm **song song trên nhánh `rewrite-vue-mysql`**, KHÔNG đụng `main` (bản SQLite + vanilla vẫn chạy Cloud Run).
+
+### Kiến trúc bản mới
+- **Backend:** Node.js + Express (giữ nguyên cấu trúc file gốc), tầng DB = **MySQL** (`mysql2`).
+  - `db.js`: pool mysql2 + wrapper **`db.prepare(sql).get/all/run(...)` BẤT ĐỒNG BỘ** (giữ cú pháp cũ, chỉ thêm `await`). `db.init()` tạo 10 bảng khi khởi động + seed. Biến env: `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME` (mặc định 127.0.0.1:3307 / checkin / checkinpw / checkin).
+  - `server.js`: `await db.init()` trước `listen`; phục vụ `public-vue/` (build Vue) nếu có, else `public/`.
+  - `routes/api.js`, `email.js`: đã async hóa toàn bộ + sửa SQL SQLite→MySQL (`datetime('now')`→`UTC_TIMESTAMP()`, `INSERT OR IGNORE`→`INSERT IGNORE`, `ON CONFLICT..DO UPDATE`→`ON DUPLICATE KEY UPDATE ..VALUES()`, scheduler dùng `DATE_ADD(.. INTERVAL .. MINUTE)`). Cột datetime `DEFAULT (UTC_TIMESTAMP())`; mysql2 `dateStrings:true` để trả chuỗi UTC (frontend `fmtDate(x,true)` thêm 'Z').
+- **Frontend:** thư mục `web/` = Vite + Vue 3 + Tailwind + **bộ component MDS** copy từ skill (`web/src/components/mds/M*.vue` + `toast.js`), tokens ở `web/src/tokens/` (theme blue). Router hash (`web/src/router.js`). API client + auth state ở `web/src/api.js` (session cookie same-origin). Dev: Vite 5173 proxy `/api`,`/uploads`→backend 3000. Build: `outDir ../public-vue`.
+
+### Tiến độ (tính đến lần cập nhật này)
+- ✅ **GĐ0 Backend MySQL** — xong, đã commit `ffd4c53`. Test 14 + 14 kịch bản pass trên MySQL (script ở `/tmp/checkintest/test.mjs`, `test2.mjs`).
+- ✅ **GĐ1 Frontend nền** — xong, đã commit. Gồm: `LoginView`, `App.vue` (shell topbar+nav), `EventsView` (CRUD sự kiện + điều kiện tham dự), `MembersView`, `SmtpView`, `EventDetailView` (khung tabs + placeholder). Verify qua preview: đăng nhập + tạo sự kiện → MySQL OK.
+- ✅ **GĐ2 xong** (2026-07-08) — 3 tab quản trị đã nối vào `EventDetailView.vue` qua `tabComponents` (dynamic `defineAsyncComponent` map: `attendees`/`booths`/`staff`), render bằng `<component :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />`; tab chưa làm giữ placeholder. File: `web/src/lib/print.js` (in tem 50×50), `web/src/components/AttendeeFields.vue`, `web/src/views/tabs/{BoothsTab,AttendeesTab,StaffTab}.vue`. Các tab **tự load dữ liệu** trong `onMounted` (không cần `@reload`; vẫn để `@reload` phòng sau này). Verify qua preview: 3 tab render OK, tạo booth "Booth AI - MISA AMIS" → ghi MySQL + re-render OK, 0 lỗi console.
+- ✅ **GĐ3–4 xong** (2026-07-08) — đã port toàn bộ 8 tab còn lại sang Vue, nối vào `EventDetailView.tabComponents`:
+  - `scan` (`ScanTab.vue`) + `pair` (`PairTab.vue`): camera html5-qrcode qua composable dùng chung `web/src/lib/scanner.js` (`useScanner` tự start onMounted / stop onBeforeUnmount + `vibrate`). ScanTab xử lý đủ 11 status của `/scan`, chọn vị trí cổng/booth (localStorage), auto-confirm, khách vãng lai. PairTab: lookup → pair (xử lý `duplicate` 409 → confirm → force), ngừng/dùng lại thẻ.
+  - `reception` (`ReceptionTab.vue`): danh sách toàn bộ khách + tìm kiếm + check-in tay + in tem + vãng lai (tự in tem).
+  - `badges` (`BadgesTab.vue`): sinh phôi, tải ZIP SVG (thẻ `<a download>`), 4 tile thống kê, lọc, ngừng/dùng lại.
+  - `email` (`EmailTab.vue`): dùng `BodyEditor.vue` (2 chế độ text/HTML, helper ở `web/src/lib/emailBody.js` gồm `SUGGEST`), upload ảnh header/footer (multipart), slider độ rộng, xem trước (`<iframe srcdoc>`).
+  - `report` (`ReportTab.vue`): 5 tile, lượt ghé booth, lọc, ghi chú giám sát theo booth, xuất Excel (`<a download>`), sửa nhanh.
+  - `monitor` (`MonitorTab.vue`): ghi chú booth cho supervisor.
+  - `dashboard` (`DashboardTab.vue`): số liệu ẩn danh từ `/stats`, chip lọc (trong chiều OR / giữa chiều AND), hero tỷ lệ, tỷ trọng drill-down. **Không dùng MChart/echarts** — tự vẽ thanh bar bằng CSS (nên echarts không bị bundle).
+  - Verify qua preview + Docker: tất cả tab render, tạo booth/khách/check-in → MySQL, Email save + suggest, Dashboard lọc VIP → 100% đúng, 0 lỗi console.
+- ✅ **GĐ5 xong** (2026-07-08) — Docker hóa nội bộ (MySQL):
+  - `Dockerfile.internal` viết lại **đa tầng**: tầng 1 `node:20-slim` build Vue (`web/` → `/public-vue`), tầng 2 chạy Node — **bỏ python/make/g++** (mysql2 thuần JS). Ảnh tự chứa, không phụ thuộc bản build sẵn trên máy.
+  - `docker-compose.internal.yml`: thêm service **`mysql` (pin `mysql:8.0`)** + healthcheck + `app` `depends_on: service_healthy`, truyền `DB_HOST=mysql DB_PORT=3306 ...`. 2 volume `checkin-mysql` (DB) + `checkin-data` (uploads).
+  - Gỡ `better-sqlite3` khỏi `package.json` (chỉ còn trong comment). `.dockerignore` loại `web/node_modules`, `public-vue`.
+  - Test thật: `docker compose -f docker-compose.internal.yml up -d --build` → MySQL healthy, app seed super admin, đăng nhập UI qua HTTP OK, tạo sự kiện + khách + check-in + Dashboard đều chạy trên container. 0 lỗi console.
+
+### Môi trường dev (cách chạy lại sau khi clear/khởi động lại máy)
+```bash
+# 1. MySQL (nếu container đã xoá):
+docker run -d --name checkin-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=checkin \
+  -e MYSQL_USER=checkin -e MYSQL_PASSWORD=checkinpw -p 3307:3306 mysql:8
+# 2. Backend (nhánh rewrite-vue-mysql):
+cd misa-event-checkin && PORT=3000 DB_PORT=3307 node server.js
+# 3. Frontend dev:
+cd misa-event-checkin/web && npm run dev   # http://localhost:5173
+```
+Preview (Claude Code): launch config `misa-checkin-web` (port 5173) đã có trong `~/.claude/launch.json`. Đăng nhập super admin: tuanbui88vn@gmail.com / SocTho0607!9@@.
+
+### Lưu ý kỹ thuật đã gặp
+- `MDialog` (MDS): mặc định `type='default'` chỉ 1 nút và nút đó CHÍNH là `@confirm`. Muốn nút "Lưu" + có "Hủy" → đặt `type="confirm" confirm-text="Lưu"`.
+- MDS components dùng Tailwind → `web/tailwind.config.js` phải quét cả `src/components/mds`.
+- ✅ Đã gỡ `better-sqlite3` khỏi package.json ở GĐ5.
+- **Trình biên dịch Vue KHÔNG cho phép `{{` lồng trong biểu thức nội suy** (VD hiển thị chữ `{{ho_ten}}` bằng `{{ '{{ho_ten}}' }}` → lỗi "Unterminated string constant"). Cách làm: đưa các chuỗi biến vào `script` (mảng) rồi render `<code v-for>`.
+- **Session cookie**: đổi từ `secure: IS_CLOUD` → `secure: 'auto'` (server.js). 'auto' + `trust proxy` = tự bật secure khi HTTPS, tắt khi HTTP → chạy được cả sau proxy HTTPS lẫn HTTP trực tiếp (Docker nội bộ). Trước đây `NODE_ENV=production` ép secure=true làm hỏng đăng nhập khi truy cập qua HTTP.
+- **Docker MySQL**: `mysql:8` giờ trỏ 8.4 đã **bỏ** tuỳ chọn `--default-authentication-plugin` → container chết. Phải pin `mysql:8.0`.
+- **Thiếu alias token MDS**: bộ component MDS tham chiếu các biến ngữ nghĩa (`--mds-bg`, `--mds-border`, `--mds-text`, `--mds-text-placeholder`, `--mds-bg-hover-soft`, `--mds-bg-disabled`, `--mds-danger/info/success/warning`) nhưng bộ token `blue.css` KHÔNG định nghĩa (chỉ có `--mds-bg-white`, `--mds-stroke-neutral`...). Hậu quả: nền dropdown/input **trong suốt**, đè chữ bên dưới. Đã map alias ở `:root` trong `web/src/style.css`. Nếu thêm component MDS mới mà thấy nền/viền/màu chữ sai → kiểm tra alias còn thiếu.
+
+### Chạy bằng Docker (hạ tầng nội bộ, đã test)
+```bash
+docker compose -f docker-compose.internal.yml up -d --build   # dựng cả MySQL + app
+docker compose -f docker-compose.internal.yml logs -f app
+docker compose -f docker-compose.internal.yml down             # giữ dữ liệu
+docker compose -f docker-compose.internal.yml down -v          # xoá luôn dữ liệu
+```
+App ở http://localhost:3000. Super admin seed sẵn: tuanbui88vn@gmail.com / SocTho0607!9@@.
 
 ## 11. Quy tắc cập nhật file này
 

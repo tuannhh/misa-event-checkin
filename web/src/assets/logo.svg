@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 900 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4CD964" />
+      <stop offset="100%" stop-color="#1BA645" />
+    </linearGradient>
+  </defs>
+
+  <!-- Icon -->
+  <g transform="translate(8, 8)">
+    <path d="M 48,96 C 37,96 30,96 24,94 C 18,93 13,90 10,86 C 7,82 5,77 4,71 C 2,65 2,58 2,48 C 2,38 2,30 4,24 C 5,18 7,13 10,10 C 13,6 18,3 24,2 C 30,0 37,0 48,0 C 59,0 66,0 72,2 C 78,3 83,6 86,10 C 89,13 91,18 92,24 C 94,30 94,38 94,48 C 94,58 94,65 92,71 C 91,77 89,82 86,86 C 83,90 78,93 72,94 C 66,96 59,96 48,96 Z" fill="url(#bgGradient)" />
+    <g transform="translate(19, 19) scale(0.28)" fill="#FFFFFF">
+      <path fill="#FFFFFF" d="M48 48v144h144V48H48zm112 112H80V80h80v80zM320 48v144h144V48H320zm112 112h-80V80h80v80zM48 320v144h144V320H48zm112 112H80v-80h80v80z"/>
+      <path fill="#FFFFFF" d="M190 290l65 65 195-195 34 34-229 229-99-99 34-34z"/>
+      <rect fill="#FFFFFF" x="320" y="380" width="36" height="84" />
+      <rect fill="#FFFFFF" x="388" y="330" width="36" height="134" />
+      <rect fill="#FFFFFF" x="456" y="270" width="36" height="194" />
+    </g>
+  </g>
+
+  <!-- Text -->
+  <text x="125" y="110" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="72" fill="#1d4ed8">MISA Check-in</text>
+</svg>

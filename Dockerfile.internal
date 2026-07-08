@@ -1,33 +1,38 @@
 # ============================================================
 # Dockerfile cho HẠ TẦNG NỘI BỘ MISA (không dùng Google Cloud / Litestream)
-# Dữ liệu SQLite lưu trong volume gắn vào /data (dev tự sao lưu volume này).
+# Stack: Node/Express + MySQL (mysql2 thuần JS - KHÔNG cần python/make/g++).
+# Frontend Vue 3 được BUILD ngay trong image (đa tầng) -> ảnh tự chứa, không phụ
+# thuộc bản build sẵn trên máy.
 # Build:  docker build -f Dockerfile.internal -t misa-event-checkin:noibo .
-# Chạy:   docker run -d -p 3000:3000 -v checkin-data:/data --name checkin misa-event-checkin:noibo
-# (hoặc dùng docker-compose.internal.yml cho tiện)
+# Chạy:   nên dùng docker-compose.internal.yml (kèm dịch vụ MySQL).
 # ============================================================
+
+# ---- Tầng 1: build giao diện Vue -> /public-vue ----
+FROM node:20-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build        # Vite outDir = ../public-vue -> /public-vue
+
+# ---- Tầng 2: máy chủ Node ----
 FROM node:20-slim
-
-# better-sqlite3 cần Python + trình biên dịch C++ để build khi cài
-RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 make g++ \
- && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# Cài thư viện Node (tách riêng để tận dụng cache khi build lại)
+# mysql2 là thư viện thuần JavaScript nên KHÔNG cần trình biên dịch C++ như better-sqlite3 trước đây.
 COPY package.json package-lock.json ./
 RUN npm install --omit=dev
 
-# Copy toàn bộ mã nguồn
+# Mã nguồn backend (web/node_modules và public-vue đã bị .dockerignore loại trừ)
 COPY . .
+# Lấy bản Vue đã build từ tầng 1
+COPY --from=web /public-vue ./public-vue
 
 ENV NODE_ENV=production
-# Nơi lưu database + uploads. Gắn volume vào đường dẫn này để dữ liệu không mất khi restart container.
+# Thư mục lưu uploads (ảnh...) - gắn volume để không mất khi restart. Database nằm ở MySQL riêng.
 ENV DATA_DIR=/data
-# Cổng ứng dụng (đổi bằng -e PORT=... nếu cần)
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Chạy thẳng Node, không qua Litestream (khác bản Cloud Run)
 CMD ["node", "server.js"]

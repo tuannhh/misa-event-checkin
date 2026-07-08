@@ -3,3 +3,10 @@ data/
 *.log
 
 .claude/
+
+# File thuyet trinh / tam (khong theo doi)
+MISA-Event-Checkin-Presentation.*
+~$*
+generate-presentation.js
+web/node_modules
+public-vue

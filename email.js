@@ -1,20 +1,17 @@
 // Gửi email xác nhận (kèm QR code) và email cảm ơn
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
-const path = require('path');
-const fs = require('fs');
 const db = require('./db');
-const { UPLOAD_DIR } = require('./config');
 
 // Địa chỉ công khai của website (cần cho ảnh trong email khi gửi qua Brevo)
 const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 
-function getSettings() {
+async function getSettings() {
   return db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
 }
 
-function getTransport() {
-  const s = getSettings();
+async function getTransport() {
+  const s = await getSettings();
   if (!s) return null;
   if (s.brevo_api_key) return { provider: 'brevo', settings: s }; // ưu tiên Brevo nếu có key
   if (!s.smtp_user || !s.smtp_pass) return null;
@@ -73,18 +70,18 @@ function fillTemplate(text, attendee, event) {
 
 // Nội dung có thể là văn bản thường hoặc HTML - tự nhận biết
 function bodyToHtml(body) {
-  if (/<[a-z][^>]*>/i.test(body)) return body; // người dùng đã viết HTML
-  return body.replace(/\n/g, '<br/>');
+  if (/<[a-z][^>]*>/i.test(body || '')) return body; // người dùng đã viết HTML
+  return (body || '').replace(/\n/g, '<br/>');
 }
 
 /**
- * Dựng email hoàn chỉnh (header + nội dung + footer).
+ * Dựng email hoàn chỉnh (header + nội dung + footer). BẤT ĐỒNG BỘ (đọc ảnh từ DB).
  * mode = 'cid'    : ảnh nhúng dạng đính kèm (gửi qua SMTP)
  * mode = 'web'    : ảnh dùng đường dẫn tương đối (xem trước trên trình duyệt)
  * mode = 'remote' : ảnh dùng đường dẫn công khai đầy đủ (gửi qua Brevo)
  * Trả về { html, attachments }
  */
-function buildEmail(type, attendee, event, settings, mode) {
+async function buildEmail(type, attendee, event, settings, mode) {
   const isConfirm = type === 'confirm';
   const rawBody = isConfirm ? settings.confirm_body : settings.thank_body;
   let body = bodyToHtml(fillTemplate(rawBody, attendee, event));
@@ -102,8 +99,8 @@ function buildEmail(type, attendee, event, settings, mode) {
   }
 
   // Ảnh header / footer (lưu trong database, bảng email_images)
-  function imgBlock(kind, cidName, width) {
-    const row = db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(event.id, kind);
+  async function imgBlock(kind, cidName, width) {
+    const row = await db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(event.id, kind);
     if (!row) return '';
     let src;
     if (mode === 'cid') {
@@ -115,8 +112,8 @@ function buildEmail(type, attendee, event, settings, mode) {
     }
     return `<div style="text-align:center"><img src="${src}" alt="" style="width:${width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
   }
-  const headerHtml = imgBlock('header', 'headerimg', settings.header_width);
-  const footerHtml = imgBlock('footer', 'footerimg', settings.footer_width);
+  const headerHtml = await imgBlock('header', 'headerimg', settings.header_width);
+  const footerHtml = await imgBlock('footer', 'footerimg', settings.footer_width);
 
   const html = `
   <div style="background:#f3f4f6;padding:16px 0">
@@ -131,12 +128,12 @@ function buildEmail(type, attendee, event, settings, mode) {
 
 // Gửi email xác nhận đăng ký kèm mã QR
 async function sendConfirmEmail(attendee, event, settings) {
-  const t = getTransport();
+  const t = await getTransport();
   if (!t) throw new Error('Chưa cấu hình gửi email (vào mục Cấu hình Email)');
   if (!attendee.email) throw new Error('Người tham dự không có email');
 
   const mode = t.provider === 'brevo' ? 'remote' : 'cid';
-  const { html, attachments } = buildEmail('confirm', attendee, event, settings, mode);
+  const { html, attachments } = await buildEmail('confirm', attendee, event, settings, mode);
   if (mode === 'cid') {
     const qrPng = await QRCode.toBuffer(attendee.qr_token, { width: 300, margin: 2 });
     attachments.push({ filename: 'qrcode.png', content: qrPng, cid: 'qrcode' });
@@ -148,23 +145,23 @@ async function sendConfirmEmail(attendee, event, settings) {
     html,
     attachments,
   });
-  db.prepare("UPDATE attendees SET confirm_email_sent_at = datetime('now') WHERE id = ?").run(attendee.id);
+  await db.prepare('UPDATE attendees SET confirm_email_sent_at = UTC_TIMESTAMP() WHERE id = ?').run(attendee.id);
 }
 
 // Gửi email cảm ơn
 async function sendThankEmail(attendee, event, settings) {
-  const t = getTransport();
+  const t = await getTransport();
   if (!t) return false;
   if (!attendee.email) return false;
   const mode = t.provider === 'brevo' ? 'remote' : 'cid';
-  const { html, attachments } = buildEmail('thank', attendee, event, settings, mode);
+  const { html, attachments } = await buildEmail('thank', attendee, event, settings, mode);
   await deliver(t, {
     to: attendee.email,
     subject: fillTemplate(settings.thank_subject, attendee, event) || `Cảm ơn bạn đã tham dự ${event.name}`,
     html,
     attachments,
   });
-  db.prepare("UPDATE attendees SET thankyou_email_sent_at = datetime('now') WHERE id = ?").run(attendee.id);
+  await db.prepare('UPDATE attendees SET thankyou_email_sent_at = UTC_TIMESTAMP() WHERE id = ?').run(attendee.id);
   return true;
 }
 
@@ -172,7 +169,7 @@ async function sendThankEmail(attendee, event, settings) {
 function startThankYouScheduler() {
   setInterval(async () => {
     try {
-      const rows = db.prepare(`
+      const rows = await db.prepare(`
         SELECT a.id AS att_id, a.event_id
         FROM attendees a
         JOIN email_settings s ON s.event_id = a.event_id
@@ -180,14 +177,14 @@ function startThankYouScheduler() {
           AND a.thankyou_email_sent_at IS NULL
           AND a.email != ''
           AND s.thank_enabled = 1
-          AND s.thank_body != ''
-          AND datetime(a.checked_in_at, '+' || s.thank_delay_minutes || ' minutes') <= datetime('now')
+          AND s.thank_body IS NOT NULL AND s.thank_body != ''
+          AND DATE_ADD(a.checked_in_at, INTERVAL s.thank_delay_minutes MINUTE) <= UTC_TIMESTAMP()
         LIMIT 20
       `).all();
       for (const r of rows) {
-        const attendee = db.prepare('SELECT * FROM attendees WHERE id = ?').get(r.att_id);
-        const event = db.prepare('SELECT * FROM events WHERE id = ?').get(r.event_id);
-        const settings = db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(r.event_id);
+        const attendee = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(r.att_id);
+        const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(r.event_id);
+        const settings = await db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(r.event_id);
         try { await sendThankEmail(attendee, event, settings); }
         catch (e) { console.error('Lỗi gửi email cảm ơn cho', attendee.email, e.message); }
       }

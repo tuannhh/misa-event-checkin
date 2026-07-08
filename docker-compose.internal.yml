@@ -2,28 +2,60 @@
 # Chạy MISA Event Check-in trên hạ tầng nội bộ bằng Docker Compose.
 #   docker compose -f docker-compose.internal.yml up -d --build
 #   docker compose -f docker-compose.internal.yml logs -f
-#   docker compose -f docker-compose.internal.yml down        (giữ dữ liệu)
-# Dữ liệu (SQLite + uploads) nằm trong volume "checkin-data" -> không mất khi restart/rebuild.
+#   docker compose -f docker-compose.internal.yml down          (giữ dữ liệu)
+#   docker compose -f docker-compose.internal.yml down -v       (XOÁ luôn dữ liệu)
+# Kiến trúc: dịch vụ "app" (Node/Express + Vue) + dịch vụ "mysql" (CSDL).
+# Dữ liệu nằm trong 2 volume:
+#   - checkin-mysql : toàn bộ database MySQL
+#   - checkin-data  : uploads/ảnh (nếu có)
+# => KHÔNG mất khi restart/rebuild.
 # ============================================================
 services:
+  mysql:
+    image: mysql:8.0                             # pin 8.0: ổn định + hỗ trợ mysql_native_password (8.4 đã bỏ tuỳ chọn này)
+    container_name: checkin-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpw               # ĐỔI khi chạy thật
+      - MYSQL_DATABASE=checkin
+      - MYSQL_USER=checkin
+      - MYSQL_PASSWORD=checkinpw                 # ĐỔI khi chạy thật (khớp DB_PASSWORD của app)
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - checkin-mysql:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpw"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   app:
     build:
       context: .
       dockerfile: Dockerfile.internal
     image: misa-event-checkin:noibo
     container_name: misa-event-checkin
+    depends_on:
+      mysql:
+        condition: service_healthy               # đợi MySQL sẵn sàng mới khởi động app
     ports:
-      - "3000:3000"                 # đổi cổng ngoài nếu cần: "8080:3000"
+      - "3000:3000"                              # đổi cổng ngoài nếu cần: "8080:3000"
     environment:
-      - DATA_DIR=/data
+      - DB_HOST=mysql                            # tên dịch vụ MySQL ở trên
+      - DB_PORT=3306
+      - DB_USER=checkin
+      - DB_PASSWORD=checkinpw
+      - DB_NAME=checkin
       - PORT=3000
+      - DATA_DIR=/data
       # ĐỔI chuỗi bí mật này khi chạy thật (ký session đăng nhập):
       - SESSION_SECRET=doi-chuoi-bi-mat-nay-khi-chay-that
-      # Nếu gửi email qua Brevo, khai báo URL công khai để ảnh trong email hiển thị được:
+      # Nếu chạy sau proxy HTTPS + gửi email qua Brevo, khai báo URL công khai để ảnh trong email hiển thị được:
       # - BASE_URL=https://checkin.noi-bo.misa.vn
     volumes:
       - checkin-data:/data
     restart: unless-stopped
 
 volumes:
+  checkin-mysql:
   checkin-data:

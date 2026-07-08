@@ -1,172 +1,203 @@
-// Cơ sở dữ liệu SQLite - tự động tạo file data/checkin.db khi chạy lần đầu
-const Database = require('better-sqlite3');
+// Tầng dữ liệu MySQL (thay cho SQLite/better-sqlite3).
+// Giữ API quen thuộc db.prepare(sql).get/all/run nhưng BẤT ĐỒNG BỘ (phải await),
+// để mã nguồn cũ chỉ cần thêm `await` thay vì viết lại toàn bộ truy vấn.
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
-const path = require('path');
-const { DATA_DIR } = require('./config');
 
-const db = new Database(path.join(DATA_DIR, 'checkin.db'));
-db.pragma('journal_mode = WAL');
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: Number(process.env.DB_PORT) || 3307,
+  user: process.env.DB_USER || 'checkin',
+  password: process.env.DB_PASSWORD || 'checkinpw',
+  database: process.env.DB_NAME || 'checkin',
+  waitForConnections: true,
+  connectionLimit: 10,
+  charset: 'utf8mb4',
+  dateStrings: true,   // trả datetime dạng chuỗi 'YYYY-MM-DD HH:MM:SS' (UTC) - frontend thêm 'Z' khi hiển thị
+});
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  department TEXT DEFAULT '',
-  unit TEXT DEFAULT '',
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('super_admin','admin','moderator','checkin')),
-  created_at TEXT DEFAULT (datetime('now'))
-);
+// prepare(sql) trả về đối tượng có get/all/run nhận tham số dạng varargs (?), giống better-sqlite3
+function prepare(sql) {
+  return {
+    async get(...params) { const [rows] = await pool.query(sql, params); return rows[0]; },
+    async all(...params) { const [rows] = await pool.query(sql, params); return rows; },
+    async run(...params) {
+      const [r] = await pool.query(sql, params);
+      return { lastInsertRowid: r.insertId, changes: r.affectedRows };
+    },
+  };
+}
+async function exec(sql) { await pool.query(sql); }
 
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  event_date TEXT NOT NULL,
-  organizer TEXT DEFAULT '',
-  unit TEXT DEFAULT '',
-  created_by INTEGER NOT NULL REFERENCES users(id),
-  created_at TEXT DEFAULT (datetime('now'))
-);
+const db = { prepare, exec, pool };
 
-CREATE TABLE IF NOT EXISTS event_staff (
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  PRIMARY KEY (event_id, user_id)
-);
+// Tạo bảng (nếu chưa có) + seed - gọi 1 lần lúc khởi động server (await db.init()).
+// Dùng DEFAULT (UTC_TIMESTAMP()) để created_at luôn theo giờ UTC, không phụ thuộc timezone server MySQL.
+async function init() {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      department VARCHAR(255) NOT NULL DEFAULT '',
+      unit VARCHAR(255) NOT NULL DEFAULT '',
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(20) NOT NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP())
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS attendees (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  email TEXT DEFAULT '',
-  phone TEXT DEFAULT '',
-  position TEXT DEFAULT '',
-  company TEXT DEFAULT '',
-  tax_code TEXT DEFAULT '',
-  company_size TEXT DEFAULT '',
-  qr_token TEXT NOT NULL UNIQUE,
-  checked_in_at TEXT,
-  checked_in_by INTEGER REFERENCES users(id),
-  is_walkin INTEGER DEFAULT 0,
-  confirm_email_sent_at TEXT,
-  thankyou_email_sent_at TEXT,
-  created_at TEXT DEFAULT (datetime('now'))
-);
+    `CREATE TABLE IF NOT EXISTS events (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(500) NOT NULL,
+      event_date VARCHAR(30) NOT NULL,
+      organizer VARCHAR(255) NOT NULL DEFAULT '',
+      unit VARCHAR(255) NOT NULL DEFAULT '',
+      created_by INT NOT NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      eligibility_field VARCHAR(50) NOT NULL DEFAULT '',
+      eligibility_values TEXT,
+      CONSTRAINT fk_events_user FOREIGN KEY (created_by) REFERENCES users(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS email_settings (
-  event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
-  confirm_subject TEXT DEFAULT '',
-  confirm_body TEXT DEFAULT '',
-  auto_send_confirm INTEGER DEFAULT 0,
-  thank_subject TEXT DEFAULT '',
-  thank_body TEXT DEFAULT '',
-  thank_delay_minutes INTEGER DEFAULT 60,
-  thank_enabled INTEGER DEFAULT 0
-);
+    `CREATE TABLE IF NOT EXISTS event_staff (
+      event_id INT NOT NULL,
+      user_id INT NOT NULL,
+      booth_id INT NULL,
+      staff_type VARCHAR(20) NOT NULL DEFAULT 'checkin',
+      PRIMARY KEY (event_id, user_id),
+      CONSTRAINT fk_es_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+      CONSTRAINT fk_es_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS booths (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  sort INTEGER DEFAULT 0
-);
+    `CREATE TABLE IF NOT EXISTS attendees (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL DEFAULT '',
+      phone VARCHAR(50) NOT NULL DEFAULT '',
+      position VARCHAR(100) NOT NULL DEFAULT '',
+      company VARCHAR(500) NOT NULL DEFAULT '',
+      tax_code VARCHAR(50) NOT NULL DEFAULT '',
+      company_size VARCHAR(100) NOT NULL DEFAULT '',
+      qr_token VARCHAR(40) NOT NULL UNIQUE,
+      checked_in_at DATETIME NULL,
+      checked_in_by INT NULL,
+      is_walkin TINYINT NOT NULL DEFAULT 0,
+      confirm_email_sent_at DATETIME NULL,
+      thankyou_email_sent_at DATETIME NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      salutation VARCHAR(20) NOT NULL DEFAULT '',
+      importance VARCHAR(50) NOT NULL DEFAULT 'Bình thường',
+      CONSTRAINT fk_att_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS booth_visits (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  booth_id INTEGER NOT NULL REFERENCES booths(id) ON DELETE CASCADE,
-  attendee_id INTEGER NOT NULL REFERENCES attendees(id) ON DELETE CASCADE,
-  visited_at TEXT DEFAULT (datetime('now')),
-  visited_by INTEGER REFERENCES users(id),
-  UNIQUE(booth_id, attendee_id)
-);
+    `CREATE TABLE IF NOT EXISTS email_settings (
+      event_id INT PRIMARY KEY,
+      confirm_subject VARCHAR(500) NOT NULL DEFAULT '',
+      confirm_body TEXT,
+      auto_send_confirm TINYINT NOT NULL DEFAULT 0,
+      thank_subject VARCHAR(500) NOT NULL DEFAULT '',
+      thank_body TEXT,
+      thank_delay_minutes INT NOT NULL DEFAULT 60,
+      thank_enabled TINYINT NOT NULL DEFAULT 0,
+      header_image VARCHAR(50) NOT NULL DEFAULT '',
+      footer_image VARCHAR(50) NOT NULL DEFAULT '',
+      header_width INT NOT NULL DEFAULT 100,
+      footer_width INT NOT NULL DEFAULT 100,
+      CONSTRAINT fk_ems_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS email_images (
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
-  mime TEXT NOT NULL,
-  data BLOB NOT NULL,
-  PRIMARY KEY (event_id, kind)
-);
+    `CREATE TABLE IF NOT EXISTS booths (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      sort INT NOT NULL DEFAULT 0,
+      CONSTRAINT fk_booth_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
--- Kho phôi thẻ in sẵn: mỗi phôi có 1 mã định danh (số tuần tự), gán với 1 khách tại quầy
-CREATE TABLE IF NOT EXISTS badges (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  code TEXT NOT NULL,                                  -- mã in trên phôi thẻ (số tuần tự trong 1 sự kiện)
-  attendee_id INTEGER REFERENCES attendees(id) ON DELETE SET NULL,  -- NULL = phôi trắng chưa gán
-  status TEXT NOT NULL DEFAULT 'active',               -- 'active' = đang dùng | 'stopped' = đã ngừng (mất thẻ/chống gian lận)
-  paired_at TEXT,
-  paired_by INTEGER REFERENCES users(id),
-  created_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(event_id, code)
-);
+    `CREATE TABLE IF NOT EXISTS booth_visits (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      booth_id INT NOT NULL,
+      attendee_id INT NOT NULL,
+      visited_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      visited_by INT NULL,
+      note TEXT,
+      UNIQUE KEY uq_booth_attendee (booth_id, attendee_id),
+      CONSTRAINT fk_bv_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bv_booth FOREIGN KEY (booth_id) REFERENCES booths(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bv_att FOREIGN KEY (attendee_id) REFERENCES attendees(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-CREATE TABLE IF NOT EXISTS smtp_settings (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  host TEXT DEFAULT 'smtp.gmail.com',
-  port INTEGER DEFAULT 465,
-  secure INTEGER DEFAULT 1,
-  smtp_user TEXT DEFAULT '',
-  smtp_pass TEXT DEFAULT '',
-  from_name TEXT DEFAULT 'Ban Tổ Chức Sự Kiện'
-);
-`);
+    `CREATE TABLE IF NOT EXISTS email_images (
+      event_id INT NOT NULL,
+      kind VARCHAR(20) NOT NULL,
+      mime VARCHAR(50) NOT NULL,
+      data LONGBLOB NOT NULL,
+      PRIMARY KEY (event_id, kind),
+      CONSTRAINT fk_ei_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
-// Nâng cấp CSDL cũ: thêm cột Brevo (gửi email qua HTTPS - dùng cho cloud vì Railway chặn SMTP)
-const smtpCols = db.prepare("PRAGMA table_info(smtp_settings)").all().map(c => c.name);
-for (const [col, def] of [['brevo_api_key', "TEXT DEFAULT ''"], ['sender_email', "TEXT DEFAULT ''"]]) {
-  if (!smtpCols.includes(col)) db.exec(`ALTER TABLE smtp_settings ADD COLUMN ${col} ${def}`);
+    `CREATE TABLE IF NOT EXISTS badges (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      code VARCHAR(50) NOT NULL,
+      attendee_id INT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'active',
+      paired_at DATETIME NULL,
+      paired_by INT NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      UNIQUE KEY uq_event_code (event_id, code),
+      CONSTRAINT fk_badge_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+      CONSTRAINT fk_badge_att FOREIGN KEY (attendee_id) REFERENCES attendees(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+    // Ghi chú "giám sát bóng ma" - tra khách bằng mã thẻ, tách biệt hoàn toàn khỏi booth_visits
+    // (booth_visits dùng để tính điều kiện lucky draw, bảng này không được ảnh hưởng tới đó).
+    `CREATE TABLE IF NOT EXISTS booth_potential_notes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      booth_id INT NOT NULL,
+      attendee_id INT NOT NULL,
+      note TEXT,
+      is_potential TINYINT NOT NULL DEFAULT 0,
+      updated_by INT NULL,
+      created_at DATETIME DEFAULT (UTC_TIMESTAMP()),
+      updated_at DATETIME DEFAULT (UTC_TIMESTAMP()) ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_booth_attendee_potential (booth_id, attendee_id),
+      CONSTRAINT fk_bpn_event FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bpn_booth FOREIGN KEY (booth_id) REFERENCES booths(id) ON DELETE CASCADE,
+      CONSTRAINT fk_bpn_att FOREIGN KEY (attendee_id) REFERENCES attendees(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+    `CREATE TABLE IF NOT EXISTS smtp_settings (
+      id INT PRIMARY KEY,
+      host VARCHAR(255) NOT NULL DEFAULT 'smtp.gmail.com',
+      port INT NOT NULL DEFAULT 465,
+      secure TINYINT NOT NULL DEFAULT 1,
+      smtp_user VARCHAR(255) NOT NULL DEFAULT '',
+      smtp_pass VARCHAR(255) NOT NULL DEFAULT '',
+      from_name VARCHAR(255) NOT NULL DEFAULT 'Ban Tổ Chức Sự Kiện',
+      brevo_api_key VARCHAR(255) NOT NULL DEFAULT '',
+      sender_email VARCHAR(255) NOT NULL DEFAULT ''
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ];
+
+  for (const sql of statements) await pool.query(sql);
+
+  // Seed Super Admin lần đầu
+  const [supers] = await pool.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
+  if (!supers.length) {
+    const hash = bcrypt.hashSync('SocTho0607!9@@', 10);
+    await pool.query(
+      "INSERT INTO users (name, department, unit, email, password_hash, role) VALUES ('Super Admin','','','tuanbui88vn@gmail.com',?,'super_admin')",
+      [hash]
+    );
+    console.log('✔ Đã tạo tài khoản Super Admin: tuanbui88vn@gmail.com');
+  }
+  // Đảm bảo có 1 dòng cấu hình SMTP
+  await pool.query('INSERT IGNORE INTO smtp_settings (id) VALUES (1)');
 }
 
-// Nâng cấp CSDL cũ: thêm Xưng hô + Mức độ quan trọng cho người tham dự
-const attCols = db.prepare("PRAGMA table_info(attendees)").all().map(c => c.name);
-for (const [col, def] of [['salutation', "TEXT DEFAULT ''"], ['importance', "TEXT DEFAULT 'Bình thường'"]]) {
-  if (!attCols.includes(col)) db.exec(`ALTER TABLE attendees ADD COLUMN ${col} ${def}`);
-}
-
-// Nâng cấp CSDL cũ: thêm điều kiện đủ tham dự cho sự kiện
-const evCols = db.prepare("PRAGMA table_info(events)").all().map(c => c.name);
-for (const [col, def] of [['eligibility_field', "TEXT DEFAULT ''"], ['eligibility_values', "TEXT DEFAULT '[]'"]]) {
-  if (!evCols.includes(col)) db.exec(`ALTER TABLE events ADD COLUMN ${col} ${def}`);
-}
-
-// Nâng cấp CSDL cũ: thêm cột ảnh header/footer email nếu chưa có
-const emailCols = db.prepare("PRAGMA table_info(email_settings)").all().map(c => c.name);
-for (const [col, def] of [
-  ['header_image', "TEXT DEFAULT ''"], ['footer_image', "TEXT DEFAULT ''"],
-  ['header_width', 'INTEGER DEFAULT 100'], ['footer_width', 'INTEGER DEFAULT 100'],
-]) {
-  if (!emailCols.includes(col)) db.exec(`ALTER TABLE email_settings ADD COLUMN ${col} ${def}`);
-}
-
-// Nâng cấp CSDL cũ: gán nhân viên check-in vào 1 vị trí cố định (NULL = cổng lễ tân, hoặc 1 booth)
-const esCols = db.prepare("PRAGMA table_info(event_staff)").all().map(c => c.name);
-if (!esCols.includes('booth_id')) db.exec('ALTER TABLE event_staff ADD COLUMN booth_id INTEGER');
-// Nâng cấp CSDL cũ: loại vị trí của nhân viên trong 1 sự kiện
-//   'checkin'    = nhân viên quét QR / check-in (mặc định, giữ nguyên hành vi cũ)
-//   'reception'  = lễ tân in QR (xem toàn bộ danh sách khách, in tem QR, đứng ở cổng)
-//   'supervisor' = giám sát booth (chỉ xem khách đã ghé booth mình phụ trách + ghi chú)
-if (!esCols.includes('staff_type')) db.exec("ALTER TABLE event_staff ADD COLUMN staff_type TEXT DEFAULT 'checkin'");
-
-// Nâng cấp CSDL cũ: ghi chú của giám sát viên cho từng lượt khách ghé booth
-const bvCols = db.prepare("PRAGMA table_info(booth_visits)").all().map(c => c.name);
-if (!bvCols.includes('note')) db.exec("ALTER TABLE booth_visits ADD COLUMN note TEXT DEFAULT ''");
-
-// Bỏ vai trò Moderator: chuyển các tài khoản moderator cũ thành nhân viên check-in
-db.prepare("UPDATE users SET role = 'checkin' WHERE role = 'moderator'").run();
-
-// Tạo tài khoản Super Admin lần đầu tiên
-const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('super_admin');
-if (!existing) {
-  const hash = bcrypt.hashSync('SocTho0607!9@@', 10);
-  db.prepare(`INSERT INTO users (name, department, unit, email, password_hash, role)
-              VALUES ('Super Admin', '', '', 'tuanbui88vn@gmail.com', ?, 'super_admin')`).run(hash);
-  console.log('✔ Đã tạo tài khoản Super Admin: tuanbui88vn@gmail.com');
-}
-
-// Đảm bảo có 1 dòng cấu hình SMTP
-db.prepare('INSERT OR IGNORE INTO smtp_settings (id) VALUES (1)').run();
-
+db.init = init;
 module.exports = db;

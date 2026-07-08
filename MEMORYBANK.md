@@ -362,12 +362,13 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Dự phòng khi hết phôi:** in tem QR của khách bằng máy in nhiệt **USB**, khổ **50×50mm**, dưới QR in "Tên - Công ty". Tem chứa mã khách → quét thẳng, không cần gán.
     - UI màn hình mới theo tinh thần MISA Design System nhưng **giữ tông màu #2563eb** hiện có (không viết lại app cũ) — theo lựa chọn của chủ dự án để an toàn trước khi bàn giao dev.
     - Đã test 14 kịch bản backend + kiểm tra UI qua preview (sinh phôi, gán thẻ, ngừng thẻ, xuất ZIP, quét resolve badge) — tất cả pass.
-14. **Sửa lỗi UI (2026-07-08)** — 4 lỗi hiển thị giao diện (bàn giao sau khi hoàn thành GĐ3-5):
-    1. **Logo**: thay chữ "🎟️ MISA Event Check-in" bằng logo SVG từ file `Logo_MISA_checkin.svg` → 42px ở navbar, 64px ở màn hình đăng nhập (dễ đọc).
+14. **Sửa lỗi UI (2026-07-08)** — 6 lỗi hiển thị giao diện (bàn giao sau khi hoàn thành GĐ3-5):
+    1. **Logo**: thay chữ "🎟️ MISA Event Check-in" bằng logo SVG → 42px ở navbar, 64px ở màn hình đăng nhập (dễ đọc). **Lần 2 sửa (c4f992a)**: giảm viewBox từ 1909→900, tăng kích thước icon để icon + text cân đối nhau.
     2. **Nút biểu tượng bút → nút "Sửa"**: thay `✏️` bằng chữ "Sửa" rõ ràng ở Events/Members/Report/Attendees.
     3. **Nhãn filter mơ hồ**: thay "Tất cả" chung chung → "Tất cả trạng thái", "Tất cả mức độ", "Tất cả chức vụ", "Tất cả quy mô" để biết đang lọc theo gì mà không cần mở dropdown. Thêm luôn lọc "Quy mô nhân sự" ở ReportTab (trước đó có biến nhưng thiếu UI).
     4. **Bộ lọc select vỡ dòng**: `.toolbar-select { width: 180px; flex: 0 0 auto; }` để các ô lọc nằm cùng hàng, đều kích thước. Thêm `.name-tags { gap: 6px; }` cho tên + tag đi kèm (Vãng lai/Không đủ ĐK).
-    - **Verify:** preview (Vite) + rebuild Docker container, chụp lại màn hình xác nhận tile/select đều hàng, nhãn rõ ràng, 0 lỗi console. Commit `10e0e35` + push `rewrite-vue-mysql`.
+    5. **Cột "Mức độ" (importance) bị wrap**: thêm `white-space:nowrap` vào `<td>` để tag VIP/VVIP/... giữ trên 1 dòng.
+    - **Verify:** preview (Vite) + Docker, chụp màn hình: logo cân đối, tile/select đều hàng, mức độ 1 dòng, 0 lỗi console. Commit `10e0e35` (ui polish) → `0eb8c9f` (memorybank) → `c4f992a` (logo+report fix) + push `rewrite-vue-mysql`.
 
 ---
 

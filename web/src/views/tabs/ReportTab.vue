@@ -87,7 +87,7 @@ async function save() {
                 <MTag v-if="!r.eligible" color="danger" size="sm">Không đủ ĐK</MTag>
               </span>
             </td>
-            <td><MTag :color="impColor(r.importance)" size="sm">{{ r.importance || 'Bình thường' }}</MTag></td>
+            <td style="white-space:nowrap"><MTag :color="impColor(r.importance)" size="sm">{{ r.importance || 'Bình thường' }}</MTag></td>
             <td>{{ r.phone }}</td><td>{{ r.company }}</td>
             <td><MTag :color="r.checked_in_at ? 'success' : 'neutral'" size="sm">{{ r.checked_in_at ? 'Có' : 'Không' }}</MTag></td>
             <td style="white-space:nowrap">{{ r.checked_in_at ? fmtDate(r.checked_in_at, true) : '' }}</td>

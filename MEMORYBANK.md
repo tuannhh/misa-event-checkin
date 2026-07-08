@@ -332,6 +332,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 12. Web Bluetooth API không hỗ trợ trên Safari/iOS — máy in nhiệt Bluetooth kiểu CLab 221B (dùng app riêng, không ESC/POS công khai) không thể in trực tiếp từ web trên iPhone; xem quyết định ở mục 9 (2026-07-06). Đã thay bằng mô hình phôi thẻ in sẵn (mục 5.7) + in tem USB dự phòng.
 13. Mã QR trên phôi thẻ mã hoá `{eventId}-{code}` (không chỉ `{code}`) để chống nhầm chéo sự kiện khi 2 sự kiện có cùng số phôi. `findBadge()` trong api.js xử lý cả 2 dạng (QR có prefix eventId, và số gõ tay không prefix). Thứ tự resolve khi quét: thử `qr_token` của khách (hex 20 ký tự) trước, không thấy mới thử mã phôi.
 14. Cần `jszip` (dependency mới) để xuất ZIP bộ SVG phôi thẻ — dev chạy `npm install` là có.
+15. **UI Toolbar select bị vỡ dòng:** class `w-full` của MDS khiến MSelect tự vỡ xuống 1 dòng riêng trong `.toolbar` (flex) → dùng `.toolbar-select { width: 180px; flex: 0 0 auto; }` bọc quanh từng MSelect để cố định độ rộng và nằm cùng hàng. Thêm `.name-tags { gap: 6px; }` cho tên + MTag (Vãng lai/Không đủ ĐK) để chữ không dính khối màu.
 
 ---
 
@@ -361,6 +362,12 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Dự phòng khi hết phôi:** in tem QR của khách bằng máy in nhiệt **USB**, khổ **50×50mm**, dưới QR in "Tên - Công ty". Tem chứa mã khách → quét thẳng, không cần gán.
     - UI màn hình mới theo tinh thần MISA Design System nhưng **giữ tông màu #2563eb** hiện có (không viết lại app cũ) — theo lựa chọn của chủ dự án để an toàn trước khi bàn giao dev.
     - Đã test 14 kịch bản backend + kiểm tra UI qua preview (sinh phôi, gán thẻ, ngừng thẻ, xuất ZIP, quét resolve badge) — tất cả pass.
+14. **Sửa lỗi UI (2026-07-08)** — 4 lỗi hiển thị giao diện (bàn giao sau khi hoàn thành GĐ3-5):
+    1. **Logo**: thay chữ "🎟️ MISA Event Check-in" bằng logo SVG từ file `Logo_MISA_checkin.svg` → 42px ở navbar, 64px ở màn hình đăng nhập (dễ đọc).
+    2. **Nút biểu tượng bút → nút "Sửa"**: thay `✏️` bằng chữ "Sửa" rõ ràng ở Events/Members/Report/Attendees.
+    3. **Nhãn filter mơ hồ**: thay "Tất cả" chung chung → "Tất cả trạng thái", "Tất cả mức độ", "Tất cả chức vụ", "Tất cả quy mô" để biết đang lọc theo gì mà không cần mở dropdown. Thêm luôn lọc "Quy mô nhân sự" ở ReportTab (trước đó có biến nhưng thiếu UI).
+    4. **Bộ lọc select vỡ dòng**: `.toolbar-select { width: 180px; flex: 0 0 auto; }` để các ô lọc nằm cùng hàng, đều kích thước. Thêm `.name-tags { gap: 6px; }` cho tên + tag đi kèm (Vãng lai/Không đủ ĐK).
+    - **Verify:** preview (Vite) + rebuild Docker container, chụp lại màn hình xác nhận tile/select đều hàng, nhãn rõ ràng, 0 lỗi console. Commit `10e0e35` + push `rewrite-vue-mysql`.
 
 ---
 

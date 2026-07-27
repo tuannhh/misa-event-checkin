@@ -57,15 +57,15 @@ router.get('/events/:id/attendees', requireLogin, async (req, res) => {
     const pageSize = Math.min(200, Math.max(10, Number(req.query.page_size) || 50));
     const total = (await db.prepare(`SELECT COUNT(*) AS c FROM attendees a WHERE ${where}`).get(...params)).c;
     const rows = await db.prepare(`
-      SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-      LEFT JOIN users u ON u.id = a.checked_in_by
+      SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id
       WHERE ${where} ORDER BY a.id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`).all(...params);
     return res.json({ rows: rows.map(shape), total, page, page_size: pageSize });
   }
 
   const rows = await db.prepare(`
-    SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-    LEFT JOIN users u ON u.id = a.checked_in_by
+    SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
+    LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id
     WHERE ${where} ORDER BY a.id DESC`).all(...params);
   res.json(rows.map(shape));
 });
@@ -73,7 +73,7 @@ router.get('/events/:id/attendees', requireLogin, async (req, res) => {
 router.post('/events/:id/attendees', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền thêm người tham dự' });
-  const { name, email, phone, position, company, tax_code, company_size, salutation, importance, force } = req.body;
+  const { name, email, phone, position, company, tax_code, company_size, salutation, importance, group_id, force } = req.body;
   if (!name) return res.status(400).json({ error: 'Cần nhập Họ và tên' });
   if (phone) {
     const dup = await db.prepare('SELECT name, phone FROM attendees WHERE event_id = ? AND phone = ?').get(ev.id, String(phone).trim());
@@ -81,10 +81,11 @@ router.post('/events/:id/attendees', requireLogin, async (req, res) => {
       return res.status(409).json({ duplicate: true, error: `Số điện thoại ${dup.phone} đã có trong danh sách (${dup.name}). Bạn có chắc muốn thêm?` });
     }
   }
-  const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+  const gid = group_id ? Number(group_id) : null;
+  const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token, group_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(ev.id, name.trim(), (email || '').trim(), String(phone || '').trim(), position || '', company || '', tax_code || '', company_size || '',
-      salutation || '', importance || 'Bình thường', newToken());
+      salutation || '', importance || 'Bình thường', newToken(), gid);
   const attendee = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(info.lastInsertRowid);
   const settings = await getEmailSettings(ev.id);
   let emailResult = null;
@@ -109,9 +110,10 @@ router.put('/attendees/:id', requireLogin, async (req, res) => {
       return res.status(409).json({ duplicate: true, error: `Số điện thoại ${dup.phone} đã có trong danh sách (${dup.name}). Vẫn lưu?` });
     }
   }
-  await db.prepare(`UPDATE attendees SET name=?, email=?, phone=?, position=?, company=?, tax_code=?, company_size=?, salutation=?, importance=? WHERE id=?`)
+  const gid = b.group_id !== undefined ? (b.group_id ? Number(b.group_id) : null) : a.group_id;
+  await db.prepare(`UPDATE attendees SET name=?, email=?, phone=?, position=?, company=?, tax_code=?, company_size=?, salutation=?, importance=?, group_id=? WHERE id=?`)
     .run((b.name ?? a.name).trim(), (b.email ?? a.email).trim(), newPhone, b.position ?? a.position, b.company ?? a.company,
-      b.tax_code ?? a.tax_code, b.company_size ?? a.company_size, b.salutation ?? a.salutation, b.importance ?? a.importance, a.id);
+      b.tax_code ?? a.tax_code, b.company_size ?? a.company_size, b.salutation ?? a.salutation, b.importance ?? a.importance, gid, a.id);
   res.json({ ok: true });
 });
 
@@ -126,15 +128,16 @@ router.delete('/attendees/:id', requireLogin, async (req, res) => {
 
 router.get('/attendees/template', requireLogin, (req, res) => {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Xưng hô', 'Họ và tên', 'Email', 'Số điện thoại', 'Chức vụ', 'Mức độ quan trọng', 'Nơi công tác/Tên công ty', 'MST công ty', 'Quy mô nhân sự'],
-    ['Anh', 'Nguyễn Văn B', 'vanb@congty.com', '0912345678', 'CEO/Founder/TGĐ', 'VIP', 'Công ty TNHH ABC', '0101234567', 'Từ 50 đến dưới 100 người'],
+    ['Xưng hô', 'Họ và tên', 'Email', 'Số điện thoại', 'Chức vụ', 'Mức độ quan trọng', 'Nơi công tác/Tên công ty', 'MST công ty', 'Quy mô nhân sự', 'Nhóm khách'],
+    ['Anh', 'Nguyễn Văn B', 'vanb@congty.com', '0912345678', 'CEO/Founder/TGĐ', 'VIP', 'Công ty TNHH ABC', '0101234567', 'Từ 50 đến dưới 100 người', 'Khách VIP'],
     [],
     ['Xưng hô hợp lệ:', SALUTATIONS.join(' | ')],
     ['Chức vụ hợp lệ:', POSITIONS.join(' | ')],
     ['Mức độ hợp lệ:', IMPORTANCES.join(' | ')],
     ['Quy mô hợp lệ:', COMPANY_SIZES.join(' | ')],
+    ['Nhóm khách:', 'Để trống nếu không phân nhóm. Gõ tên nhóm bất kỳ - hệ thống tự tạo nhóm mới nếu chưa có, dùng để gửi đúng nội dung email theo nhóm (xem tab Email).'],
   ]);
-  ws['!cols'] = [{ wch: 10 }, { wch: 25 }, { wch: 28 }, { wch: 15 }, { wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 28 }];
+  ws['!cols'] = [{ wch: 10 }, { wch: 25 }, { wch: 28 }, { wch: 15 }, { wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 28 }, { wch: 18 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'NguoiThamDu');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -148,6 +151,20 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
   if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
   const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+  // Cột "Nhóm khách" (tuỳ chọn) - tự tìm nhóm theo đúng tên (không phân biệt hoa/thường), tự
+  // tạo nhóm mới nếu chưa có, để import 1 lần là gán đúng nhóm luôn (mục 6 kế hoạch nâng cấp).
+  const groupIdByName = new Map(
+    (await db.prepare('SELECT id, name FROM attendee_groups WHERE event_id = ?').all(ev.id)).map(g => [g.name.toLowerCase(), g.id])
+  );
+  async function resolveGroupId(name) {
+    if (!name) return null;
+    const key = name.trim().toLowerCase();
+    if (!key) return null;
+    if (groupIdByName.has(key)) return groupIdByName.get(key);
+    const info = await db.prepare('INSERT INTO attendee_groups (event_id, name) VALUES (?,?)').run(ev.id, name.trim());
+    groupIdByName.set(key, info.lastInsertRowid);
+    return info.lastInsertRowid;
+  }
   let added = 0; const errors = []; const newIds = [];
   for (const [i, r] of rows.entries()) {
     const name = String(r['Họ và tên'] || '').trim();
@@ -158,12 +175,13 @@ router.post('/events/:id/attendees/import', requireLogin, upload.single('file'),
       continue;
     }
     const imp = String(r['Mức độ quan trọng'] || '').trim();
-    const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    const groupId = await resolveGroupId(String(r['Nhóm khách'] || ''));
+    const info = await db.prepare(`INSERT INTO attendees (event_id, name, email, phone, position, company, tax_code, company_size, salutation, importance, qr_token, group_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(ev.id, name, String(r['Email'] || '').trim(), phone, String(r['Chức vụ'] || '').trim(),
         String(r['Nơi công tác/Tên công ty'] || r['Nơi công tác'] || r['Tên công ty'] || '').trim(),
         String(r['MST công ty'] || '').trim(), String(r['Quy mô nhân sự'] || '').trim(),
-        String(r['Xưng hô'] || '').trim(), IMPORTANCES.includes(imp) ? imp : 'Bình thường', newToken());
+        String(r['Xưng hô'] || '').trim(), IMPORTANCES.includes(imp) ? imp : 'Bình thường', newToken(), groupId);
     newIds.push(info.lastInsertRowid);
     added++;
   }

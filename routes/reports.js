@@ -73,13 +73,14 @@ router.get('/events/:id/report', requireLogin, async (req, res) => {
   if (page) {
     const pageSize = Math.min(200, Math.max(10, Number(req.query.page_size) || 50));
     resBody.total_filtered = (await db.prepare(`SELECT COUNT(*) AS c FROM attendees a WHERE ${where}`).get(...params)).c;
-    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-      LEFT JOIN users u ON u.id = a.checked_in_by WHERE ${where}
+    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id WHERE ${where}
       ORDER BY a.checked_in_at DESC, a.id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`).all(...params);
     resBody.page = page; resBody.page_size = pageSize;
   } else {
-    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-      LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
+    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id
+      WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
   }
   rows = await attachBoothVisits(ev.id, rows);
   resBody.rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) })).map(maskPiiRow(maskPii));
@@ -90,8 +91,9 @@ router.get('/events/:id/report/export', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   const asg = await requireReportPerm(req, res, ev); if (asg === undefined) return;
   const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
-  let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-    LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
+  let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
+    LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id
+    WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
   rows = await attachBoothVisits(ev.id, rows);
   rows = (await attachPotentialNotes(ev.id, rows)).map(maskPiiRow(maskPii));
   // Lọc theo ngưỡng số booth tối thiểu đã ghé - dùng cho xuất danh sách đủ điều kiện quay số lucky draw.
@@ -102,6 +104,7 @@ router.get('/events/:id/report/export', requireLogin, async (req, res) => {
     'Xưng hô': r.salutation, 'Họ và tên': r.name, 'Email': r.email, 'Số điện thoại': r.phone,
     'Chức vụ': r.position, 'Mức độ quan trọng': r.importance,
     'Nơi công tác/Tên công ty': r.company, 'MST công ty': r.tax_code, 'Quy mô nhân sự': r.company_size,
+    'Nhóm khách': r.group_name || '',
     'Đủ điều kiện': isEligible(r, ev) ? 'Có' : 'Không',
     'Đã check-in': r.checked_in_at ? 'Có' : 'Không',
     'Thời gian check-in': r.checked_in_at ? fmtVN(r.checked_in_at) : '',
@@ -115,7 +118,7 @@ router.get('/events/:id/report/export', requireLogin, async (req, res) => {
     'Đã gửi email xác nhận': r.confirm_email_sent_at ? 'Có' : 'Không',
   }));
   const ws = XLSX.utils.json_to_sheet(data);
-  ws['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 15 }, { wch: 30 }, { wch: 13 }, { wch: 26 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 50 }, { wch: 15 }, { wch: 50 }, { wch: 13 }, { wch: 20 }];
+  ws['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 15 }, { wch: 30 }, { wch: 13 }, { wch: 26 }, { wch: 18 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 50 }, { wch: 15 }, { wch: 50 }, { wch: 13 }, { wch: 20 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'BaoCao');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

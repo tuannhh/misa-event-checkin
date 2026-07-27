@@ -89,8 +89,9 @@ router.put('/smtp', requireLogin, requireRole('super_admin', 'admin'), async (re
   // ngược lại mã hoá giá trị mới trước khi lưu (xem lib/secret.js).
   const pass = (b.smtp_pass && b.smtp_pass !== '********') ? secret.encrypt(b.smtp_pass) : cur.smtp_pass;
   const brevoKey = b.brevo_api_key === '********' ? cur.brevo_api_key : secret.encrypt((b.brevo_api_key || '').trim());
-  await db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=?, brevo_api_key=?, sender_email=? WHERE id=1')
-    .run(b.host || 'smtp.gmail.com', Number(b.port) || 465, b.secure ? 1 : 0, b.smtp_user || '', pass, b.from_name || '', brevoKey, (b.sender_email || '').trim());
+  const provider = ['brevo', 'gmail', 'manual'].includes(b.provider) ? b.provider : cur.provider;
+  await db.prepare('UPDATE smtp_settings SET host=?, port=?, secure=?, smtp_user=?, smtp_pass=?, from_name=?, brevo_api_key=?, sender_email=?, provider=? WHERE id=1')
+    .run(b.host || 'smtp.gmail.com', Number(b.port) || 465, b.secure ? 1 : 0, b.smtp_user || '', pass, b.from_name || '', brevoKey, (b.sender_email || '').trim(), provider);
   res.json({ ok: true });
 });
 router.post('/smtp/test', requireLogin, requireRole('super_admin', 'admin'), async (req, res) => {

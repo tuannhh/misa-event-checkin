@@ -16,10 +16,16 @@ async function getSettings() {
   return { ...s, smtp_pass: secret.decrypt(s.smtp_pass), brevo_api_key: secret.decrypt(s.brevo_api_key) };
 }
 
+// Chọn kênh gửi THEO `provider` NGƯỜI DÙNG ĐÃ CHỌN tường minh (Brevo/Gmail/Manual) - không còn
+// suy đoán ngầm qua "có brevo_api_key thì dùng Brevo" như trước (mục 8 kế hoạch nâng cấp).
 async function getTransport() {
   const s = await getSettings();
   if (!s) return null;
-  if (s.brevo_api_key) return { provider: 'brevo', settings: s }; // ưu tiên Brevo nếu có key
+  if (s.provider === 'brevo') {
+    if (!s.brevo_api_key) return null;
+    return { provider: 'brevo', settings: s };
+  }
+  // 'gmail' và 'manual' đều là SMTP - khác nhau ở chỗ FE tự điền sẵn host/port/secure cho gmail
   if (!s.smtp_user || !s.smtp_pass) return null;
   return {
     provider: 'smtp',
@@ -80,6 +86,25 @@ function bodyToHtml(body) {
   return (body || '').replace(/\n/g, '<br/>');
 }
 
+// Khách thuộc 1 nhóm (attendee.group_id) VÀ nhóm đó có mẫu riêng cho đúng loại email (confirm/
+// thank) -> dùng mẫu đó (tự động, người dùng không cần chọn tay khi gửi - mục 6 kế hoạch nâng
+// cấp). Không thuộc nhóm nào, hoặc nhóm chưa soạn mẫu riêng -> lùi về mặc định của sự kiện
+// (settings truyền vào, y như hành vi trước khi có tính năng nhóm khách).
+async function resolveGroupOverride(type, attendee, settings) {
+  if (!attendee.group_id) return { ...settings, imgSource: null };
+  const tpl = await db.prepare('SELECT * FROM email_group_templates WHERE group_id = ? AND type = ?').get(attendee.group_id, type);
+  if (!tpl) return { ...settings, imgSource: null };
+  const key = type === 'confirm' ? 'confirm' : 'thank';
+  return {
+    ...settings,
+    [`${key}_subject`]: tpl.subject || settings[`${key}_subject`],
+    [`${key}_body`]: tpl.body || settings[`${key}_body`],
+    header_width: tpl.header_image ? tpl.header_width : settings.header_width,
+    footer_width: tpl.footer_image ? tpl.footer_width : settings.footer_width,
+    imgSource: { templateId: tpl.id, hasHeader: !!tpl.header_image, hasFooter: !!tpl.footer_image },
+  };
+}
+
 /**
  * Dựng email hoàn chỉnh (header + nội dung + footer). BẤT ĐỒNG BỘ (đọc ảnh từ DB).
  * mode = 'cid'    : ảnh nhúng dạng đính kèm (gửi qua SMTP)
@@ -87,7 +112,8 @@ function bodyToHtml(body) {
  * mode = 'remote' : ảnh dùng đường dẫn công khai đầy đủ (gửi qua Brevo)
  * Trả về { html, attachments }
  */
-async function buildEmail(type, attendee, event, settings, mode) {
+async function buildEmail(type, attendee, event, baseSettings, mode) {
+  const settings = await resolveGroupOverride(type, attendee, baseSettings);
   const isConfirm = type === 'confirm';
   const rawBody = isConfirm ? settings.confirm_body : settings.thank_body;
   let body = bodyToHtml(fillTemplate(rawBody, attendee, event));
@@ -104,9 +130,13 @@ async function buildEmail(type, attendee, event, settings, mode) {
     else body += qrImg; // không đặt vị trí thì QR nằm cuối
   }
 
-  // Ảnh header / footer (lưu trong database, bảng email_images)
+  // Ảnh header/footer: ưu tiên ảnh RIÊNG của nhóm khách (email_group_images) nếu nhóm có mẫu
+  // riêng và đã tải ảnh; không thì lùi về ảnh MẶC ĐỊNH của sự kiện (email_images, như cũ).
+  const fromGroup = kind => settings.imgSource && (kind === 'header' ? settings.imgSource.hasHeader : settings.imgSource.hasFooter);
   async function imgBlock(kind, cidName, width) {
-    const row = await db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(event.id, kind);
+    const row = fromGroup(kind)
+      ? await db.prepare('SELECT mime, data FROM email_group_images WHERE template_id = ? AND kind = ?').get(settings.imgSource.templateId, kind)
+      : await db.prepare('SELECT mime, data FROM email_images WHERE event_id = ? AND kind = ?').get(event.id, kind);
     if (!row) return '';
     let src;
     if (mode === 'cid') {
@@ -114,7 +144,9 @@ async function buildEmail(type, attendee, event, settings, mode) {
       src = 'cid:' + cidName;
     } else {
       const base = mode === 'remote' ? BASE_URL : '';
-      src = `${base}/api/events/${event.id}/email-image/${kind}.img`;
+      src = fromGroup(kind)
+        ? `${base}/api/email-templates/${settings.imgSource.templateId}/image/${kind}.img`
+        : `${base}/api/events/${event.id}/email-image/${kind}.img`;
     }
     return `<div style="text-align:center"><img src="${src}" alt="" style="width:${width || 100}%;max-width:600px;display:block;margin:0 auto"/></div>`;
   }

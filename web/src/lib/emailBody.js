@@ -1,24 +1,6 @@
-// Chuyển đổi giữa Văn bản thường và HTML cho trình soạn email + nội dung gợi ý.
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-export function isHtmlBody(v) { return /<[a-z][^>]*>/i.test(v || ''); }
-
-export function htmlToPlain(html) {
-  return String(html || '')
-    .replace(/<\s*br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;/gi, "'").replace(/&quot;/gi, '"')
-    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-export function plainToHtml(text) {
-  const t = (text || '').trim();
-  if (!t) return '';
-  return t.split(/\n{2,}/).map(p => '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>').join('\n');
-}
-
 // Nội dung email gợi ý sẵn (khớp bản cũ) — người dùng sửa hotline/link rồi lưu.
+// (Các hàm chuyển đổi Text<->HTML cũ đã XOÁ - nguồn gây mất định dạng khi chuyển tab, xem
+// components/BodyEditor.vue: giờ chỉ còn 1 nguồn sự thật là HTML, không cần chuyển đổi nữa.)
 export const SUGGEST = {
   confirm: {
     subject: 'Xác nhận đăng ký tham dự {{ten_su_kien}}',

@@ -39,7 +39,7 @@ services:
       mysql:
         condition: service_healthy               # đợi MySQL sẵn sàng mới khởi động app
     ports:
-      - "3000:3000"                              # đổi cổng ngoài nếu cần: "8080:3000"
+      - "8080:3000"                              # đổi cổng ngoài nếu cần: "8080:3000"
     environment:
       - DB_HOST=mysql                            # tên dịch vụ MySQL ở trên
       - DB_PORT=3306

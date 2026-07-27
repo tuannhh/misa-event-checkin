@@ -4,13 +4,25 @@
 #   docker compose -f docker-compose.internal.yml logs -f
 #   docker compose -f docker-compose.internal.yml down          (giữ dữ liệu)
 #   docker compose -f docker-compose.internal.yml down -v       (XOÁ luôn dữ liệu)
-# Kiến trúc: dịch vụ "app" (Node/Express + Vue) + dịch vụ "mysql" (CSDL).
+# Kiến trúc: dịch vụ "app" (Node/Express + Vue) + "mysql" (CSDL) + "redis" (session +
+# hàng đợi email cảm ơn - bắt buộc nếu sau này chạy app.scale > 1, xem lib/redis.js).
 # Dữ liệu nằm trong 2 volume:
 #   - checkin-mysql : toàn bộ database MySQL
 #   - checkin-data  : uploads/ảnh (nếu có)
-# => KHÔNG mất khi restart/rebuild.
+# => KHÔNG mất khi restart/rebuild. Redis không cần volume (session/queue mất khi restart
+#   là chấp nhận được - user chỉ cần đăng nhập lại, không mất dữ liệu nghiệp vụ).
 # ============================================================
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: checkin-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   mysql:
     image: mysql:8.0                             # pin 8.0: ổn định + hỗ trợ mysql_native_password (8.4 đã bỏ tuỳ chọn này)
     container_name: checkin-mysql
@@ -38,6 +50,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy               # đợi MySQL sẵn sàng mới khởi động app
+      redis:
+        condition: service_healthy
     ports:
       - "8080:3000"                              # đổi cổng ngoài nếu cần: "8080:3000"
     environment:
@@ -46,6 +60,7 @@ services:
       - DB_USER=checkin
       - DB_PASSWORD=checkinpw
       - DB_NAME=checkin
+      - REDIS_URL=redis://redis:6379             # session store + hàng đợi email cảm ơn
       - PORT=3000
       - DATA_DIR=/data
       # ĐỔI chuỗi bí mật này khi chạy thật (ký session đăng nhập). Sinh bằng: openssl rand -hex 32

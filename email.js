@@ -1,8 +1,10 @@
 // Gửi email xác nhận (kèm QR code) và email cảm ơn
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const { Queue, Worker } = require('bullmq');
 const db = require('./db');
 const secret = require('./lib/secret');
+const { getRedis } = require('./lib/redis');
 
 // Địa chỉ công khai của website (cần cho ảnh trong email khi gửi qua Brevo)
 const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
@@ -169,31 +171,53 @@ async function sendThankEmail(attendee, event, settings) {
   return true;
 }
 
-// Bộ hẹn giờ: mỗi phút kiểm tra ai đã check-in đủ lâu thì gửi email cảm ơn
+// Mỗi phút kiểm tra ai đã check-in đủ lâu thì gửi email cảm ơn - logic dùng chung cho cả
+// 2 cách chạy bên dưới (BullMQ hoặc setInterval dự phòng).
+async function runThankYouTick() {
+  try {
+    const rows = await db.prepare(`
+      SELECT a.id AS att_id, a.event_id
+      FROM attendees a
+      JOIN email_settings s ON s.event_id = a.event_id
+      WHERE a.checked_in_at IS NOT NULL
+        AND a.thankyou_email_sent_at IS NULL
+        AND a.email != ''
+        AND s.thank_enabled = 1
+        AND s.thank_body IS NOT NULL AND s.thank_body != ''
+        AND DATE_ADD(a.checked_in_at, INTERVAL s.thank_delay_minutes MINUTE) <= UTC_TIMESTAMP()
+      LIMIT 20
+    `).all();
+    for (const r of rows) {
+      const attendee = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(r.att_id);
+      const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(r.event_id);
+      const settings = await db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(r.event_id);
+      try { await sendThankEmail(attendee, event, settings); }
+      catch (e) { console.error('Lỗi gửi email cảm ơn cho', attendee.email, e.message); }
+    }
+  } catch (e) { console.error('Lỗi scheduler:', e.message); }
+}
+
+// Bộ hẹn giờ gửi email cảm ơn. Có REDIS_URL -> chạy qua BullMQ (repeatable job): nhiều instance
+// cùng gọi startThankYouScheduler() chỉ tạo ĐÚNG 1 lịch lặp (BullMQ dedup theo jobId), và mỗi
+// lần đến hạn chỉ 1 worker (của bất kỳ instance nào) khoá được job để chạy - KHÔNG gửi trùng
+// email dù chạy nhiều instance song song (bug đã biết của bản setInterval cũ). Không có
+// REDIS_URL -> lùi về setInterval trong-process, chỉ an toàn khi chạy đúng 1 instance.
 function startThankYouScheduler() {
-  setInterval(async () => {
-    try {
-      const rows = await db.prepare(`
-        SELECT a.id AS att_id, a.event_id
-        FROM attendees a
-        JOIN email_settings s ON s.event_id = a.event_id
-        WHERE a.checked_in_at IS NOT NULL
-          AND a.thankyou_email_sent_at IS NULL
-          AND a.email != ''
-          AND s.thank_enabled = 1
-          AND s.thank_body IS NOT NULL AND s.thank_body != ''
-          AND DATE_ADD(a.checked_in_at, INTERVAL s.thank_delay_minutes MINUTE) <= UTC_TIMESTAMP()
-        LIMIT 20
-      `).all();
-      for (const r of rows) {
-        const attendee = await db.prepare('SELECT * FROM attendees WHERE id = ?').get(r.att_id);
-        const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(r.event_id);
-        const settings = await db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(r.event_id);
-        try { await sendThankEmail(attendee, event, settings); }
-        catch (e) { console.error('Lỗi gửi email cảm ơn cho', attendee.email, e.message); }
-      }
-    } catch (e) { console.error('Lỗi scheduler:', e.message); }
-  }, 60 * 1000);
+  const redis = getRedis();
+  if (!redis) {
+    console.warn(
+      '⚠ Chưa cấu hình REDIS_URL - scheduler email cảm ơn chạy setInterval trong-process. ' +
+      'CHỈ an toàn khi chạy đúng 1 instance (nhiều instance sẽ gửi trùng email cảm ơn).'
+    );
+    setInterval(runThankYouTick, 60 * 1000);
+    return;
+  }
+  const QUEUE_NAME = 'thank-you-emails';
+  const queue = new Queue(QUEUE_NAME, { connection: redis });
+  const worker = new Worker(QUEUE_NAME, () => runThankYouTick(), { connection: redis });
+  worker.on('failed', (job, err) => console.error('Lỗi job thank-you-emails:', err.message));
+  queue.add('tick', {}, { repeat: { every: 60 * 1000 }, jobId: 'thank-you-tick' })
+    .catch(e => console.error('Không tạo được lịch scheduler email cảm ơn:', e.message));
 }
 
 module.exports = { sendConfirmEmail, sendThankEmail, startThankYouScheduler, getTransport, deliver, buildEmail, fillTemplate };

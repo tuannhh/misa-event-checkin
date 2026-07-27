@@ -8,6 +8,7 @@ const router = express.Router();
 router.use(require('./auth'));
 router.use(require('./users'));
 router.use(require('./events'));
+router.use(require('./staff-roles'));
 router.use(require('./attendees'));
 router.use(require('./checkin'));
 router.use(require('./monitor'));

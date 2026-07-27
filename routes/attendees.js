@@ -6,9 +6,10 @@ const QRCode = require('qrcode');
 const db = require('../db');
 const { sendConfirmEmail, getTransport } = require('../email');
 const {
-  requireLogin, getEventOr404, canManageEvent, canViewEvent, getAssignment, getEmailSettings,
+  requireLogin, getEventOr404, canManageEvent, canViewEvent, getEmailSettings,
   newToken, isEligible, POSITIONS, COMPANY_SIZES, IMPORTANCES, SALUTATIONS,
 } = require('./lib/helpers');
+const { getAssignment, hasPerm } = require('./lib/permissions');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -20,16 +21,20 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 router.get('/events/:id/attendees', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
 
-  let staffType = null;
+  let asg = null;
   if (req.user.role === 'checkin') {
-    const asg = await getAssignment(req.user, ev.id);
-    staffType = asg ? asg.staff_type : 'checkin';
-    if (staffType === 'supervisor' || staffType === 'manager') return res.json([]); // chỉ được xem, không có danh sách khách
+    asg = await getAssignment(req.user, ev.id);
+    if (!hasPerm(asg, 'view_checkin_list')) {
+      return res.json(req.query.page ? { rows: [], total: 0, page: 1, page_size: 50 } : []);
+    }
   }
 
   let where = 'a.event_id = ?'; const params = [ev.id];
   if (req.user.role === 'checkin') {
-    if (staffType !== 'reception' && req.query.all !== '1') where += ' AND a.checked_in_at IS NOT NULL';
+    const scope = asg.checkinListScope;
+    if (scope === 'my_booth') { where += ' AND a.id IN (SELECT attendee_id FROM booth_visits WHERE booth_id = ?)'; params.push(asg.boothId || 0); }
+    else if (scope === 'checked_in' && req.query.all !== '1') where += ' AND a.checked_in_at IS NOT NULL';
+    // scope === 'all' -> không thêm điều kiện, thấy toàn bộ khách (như 'reception' cũ)
   } else {
     where += ' AND a.is_walkin = 0';
   }
@@ -39,6 +44,14 @@ router.get('/events/:id/attendees', requireLogin, async (req, res) => {
     const like = `%${q}%`; params.push(like, like, like, like);
   }
 
+  // Không có quyền view_pii -> ẩn email/SĐT (VD: nhóm chức năng chỉ được ghi chú, không cần thấy liên hệ khách).
+  const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
+  const shape = (r) => {
+    const row = { ...r, eligible: isEligible(r, ev) };
+    if (maskPii) { row.email = ''; row.phone = ''; }
+    return row;
+  };
+
   const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : null;
   if (page) {
     const pageSize = Math.min(200, Math.max(10, Number(req.query.page_size) || 50));
@@ -47,17 +60,14 @@ router.get('/events/:id/attendees', requireLogin, async (req, res) => {
       SELECT a.*, u.name AS checked_in_by_name FROM attendees a
       LEFT JOIN users u ON u.id = a.checked_in_by
       WHERE ${where} ORDER BY a.id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`).all(...params);
-    return res.json({
-      rows: rows.map(r => ({ ...r, eligible: isEligible(r, ev) })),
-      total, page, page_size: pageSize,
-    });
+    return res.json({ rows: rows.map(shape), total, page, page_size: pageSize });
   }
 
   const rows = await db.prepare(`
     SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by
     WHERE ${where} ORDER BY a.id DESC`).all(...params);
-  res.json(rows.map(r => ({ ...r, eligible: isEligible(r, ev) })));
+  res.json(rows.map(shape));
 });
 
 router.post('/events/:id/attendees', requireLogin, async (req, res) => {

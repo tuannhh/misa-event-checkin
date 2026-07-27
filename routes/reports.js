@@ -3,9 +3,10 @@ const express = require('express');
 const XLSX = require('xlsx');
 const db = require('../db');
 const {
-  requireLogin, getEventOr404, getAssignment, isEligible, fmtVN, VIEW_ONLY_TYPES,
+  requireLogin, getEventOr404, isEligible, fmtVN,
   POSITIONS, COMPANY_SIZES, IMPORTANCES,
 } = require('./lib/helpers');
+const { getAssignment, hasPerm } = require('./lib/permissions');
 
 const router = express.Router();
 
@@ -26,11 +27,16 @@ async function attachPotentialNotes(eventId, rows) {
   return rows.map(r => ({ ...r, potential_notes: byAttendee[r.id] || [] }));
 }
 
-async function blockViewOnlyReport(req, res, ev) {
-  if (req.user.role !== 'checkin') return false;
-  const mine = await getAssignment(req.user, ev.id);
-  if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Bạn không có quyền xem báo cáo chi tiết' }); return true; }
-  return false;
+// Trả về assignment (null nếu admin/super_admin) nếu được phép xem báo cáo chi tiết; tự gửi lỗi
+// 403 và trả null nếu không đủ quyền view_report - gọi tại đầu mỗi route rồi kiểm tra `=== undefined`.
+async function requireReportPerm(req, res, ev) {
+  if (req.user.role !== 'checkin') return null;
+  const asg = await getAssignment(req.user, ev.id);
+  if (!hasPerm(asg, 'view_report')) { res.status(403).json({ error: 'Bạn không có quyền xem báo cáo chi tiết' }); return undefined; }
+  return asg;
+}
+function maskPiiRow(mask) {
+  return (r) => (mask ? { ...r, email: '', phone: '' } : r);
 }
 
 // Có ?page= -> lọc + phân trang THẬT SỰ ở phía server (LIMIT/OFFSET), cho sự kiện nhiều
@@ -41,7 +47,8 @@ async function blockViewOnlyReport(req, res, ev) {
 // khách của sự kiện, không bị ảnh hưởng bởi tìm kiếm/trang - đúng ý nghĩa "tổng quan sự kiện".
 router.get('/events/:id/report', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  if (await blockViewOnlyReport(req, res, ev)) return;
+  const asg = await requireReportPerm(req, res, ev); if (asg === undefined) return;
+  const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
 
   const total = (await db.prepare('SELECT COUNT(*) AS c FROM attendees WHERE event_id = ?').get(ev.id)).c;
   const checkedin = (await db.prepare('SELECT COUNT(*) AS c FROM attendees WHERE event_id = ? AND checked_in_at IS NOT NULL').get(ev.id)).c;
@@ -75,17 +82,18 @@ router.get('/events/:id/report', requireLogin, async (req, res) => {
       LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
   }
   rows = await attachBoothVisits(ev.id, rows);
-  resBody.rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
+  resBody.rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) })).map(maskPiiRow(maskPii));
   res.json(resBody);
 });
 
 router.get('/events/:id/report/export', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  if (await blockViewOnlyReport(req, res, ev)) return;
+  const asg = await requireReportPerm(req, res, ev); if (asg === undefined) return;
+  const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
   let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
   rows = await attachBoothVisits(ev.id, rows);
-  rows = await attachPotentialNotes(ev.id, rows);
+  rows = (await attachPotentialNotes(ev.id, rows)).map(maskPiiRow(maskPii));
   // Lọc theo ngưỡng số booth tối thiểu đã ghé - dùng cho xuất danh sách đủ điều kiện quay số lucky draw.
   // Ngưỡng gõ mỗi lần trên UI, KHÔNG lưu cấu hình cố định theo sự kiện (mỗi sự kiện số booth khác nhau).
   const minBooths = Number(req.query.min_booths) || 0;

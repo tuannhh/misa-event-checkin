@@ -2,16 +2,20 @@
 const express = require('express');
 const db = require('../db');
 const { resolveAttendee } = require('./lib/badges');
-const { requireLogin, getEventOr404, getAssignment, canManageEvent } = require('./lib/helpers');
+const { requireLogin, getEventOr404, canManageEvent } = require('./lib/helpers');
+const { getAssignment, hasPerm } = require('./lib/permissions');
 
 const router = express.Router();
 
-async function resolveMonitorBooth(req, ev) {
+// neededPerms: 1 mã quyền hoặc mảng mã quyền - chỉ cần CÓ MỘT trong số đó là đủ (dùng cho các
+// endpoint xem, vì "note" và "mark_potential" là 2 quyền độc lập, ai có 1 trong 2 vẫn xem được).
+async function resolveMonitorBooth(req, ev, neededPerms) {
+  const perms = Array.isArray(neededPerms) ? neededPerms : [neededPerms];
   if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    if (!mine || mine.staff_type !== 'supervisor') return { error: 'Chỉ dành cho Giám sát viên booth' };
-    if (!mine.booth_id) return { error: 'Bạn chưa được gán vào booth nào để giám sát' };
-    return { boothId: mine.booth_id };
+    const asg = await getAssignment(req.user, ev.id);
+    if (!perms.some(p => hasPerm(asg, p))) return { error: 'Bạn không có quyền thực hiện thao tác này' };
+    if (!asg.boothId) return { error: 'Bạn chưa được gán vào booth nào để giám sát' };
+    return { boothId: asg.boothId };
   }
   if (!canManageEvent(req.user, ev)) return { error: 'Bạn không có quyền' };
   const bid = (req.query.booth_id || req.body.booth_id) ? Number(req.query.booth_id || req.body.booth_id) : null;
@@ -21,7 +25,7 @@ async function resolveMonitorBooth(req, ev) {
 
 router.get('/events/:id/booth-monitor', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  const r = await resolveMonitorBooth(req, ev);
+  const r = await resolveMonitorBooth(req, ev, ['note', 'mark_potential']);
   if (r.error) return res.status(403).json({ error: r.error });
   const booth = await db.prepare('SELECT * FROM booths WHERE id = ? AND event_id = ?').get(r.boothId, ev.id);
   if (!booth) return res.status(404).json({ error: 'Không tìm thấy booth' });
@@ -33,7 +37,7 @@ router.get('/events/:id/booth-monitor', requireLogin, async (req, res) => {
 
 router.put('/events/:id/booth-note', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  const r = await resolveMonitorBooth(req, ev);
+  const r = await resolveMonitorBooth(req, ev, 'note');
   if (r.error) return res.status(403).json({ error: r.error });
   const attendeeId = Number(req.body.attendee_id);
   if (!attendeeId) return res.status(400).json({ error: 'Thiếu thông tin khách' });
@@ -48,7 +52,7 @@ router.put('/events/:id/booth-note', requireLogin, async (req, res) => {
 // khỏi booth_visits để không ảnh hưởng điều kiện lucky draw. Chỉ áp dụng sự kiện có phôi thẻ.
 router.get('/events/:id/booth-monitor/lookup', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  const r = await resolveMonitorBooth(req, ev);
+  const r = await resolveMonitorBooth(req, ev, ['note', 'mark_potential']);
   if (r.error) return res.status(403).json({ error: r.error });
   const badgeCount = (await db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id)).c;
   if (!badgeCount) return res.status(400).json({ error: 'Sự kiện này không dùng phôi thẻ, không tra được bằng mã thẻ' });
@@ -67,7 +71,7 @@ router.get('/events/:id/booth-monitor/lookup', requireLogin, async (req, res) =>
 
 router.put('/events/:id/booth-monitor/potential-note', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  const r = await resolveMonitorBooth(req, ev);
+  const r = await resolveMonitorBooth(req, ev, 'mark_potential');
   if (r.error) return res.status(403).json({ error: r.error });
   const attendeeId = Number(req.body.attendee_id);
   if (!attendeeId) return res.status(400).json({ error: 'Thiếu thông tin khách' });

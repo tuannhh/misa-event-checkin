@@ -2,9 +2,8 @@
 const express = require('express');
 const db = require('../db');
 const { findBadge } = require('./lib/badges');
-const {
-  requireLogin, getEventOr404, getAssignment, newToken, fmtVN, isEventToday, VIEW_ONLY_TYPES,
-} = require('./lib/helpers');
+const { requireLogin, getEventOr404, newToken, fmtVN, isEventToday } = require('./lib/helpers');
+const { requirePerm } = require('./lib/permissions');
 
 const router = express.Router();
 
@@ -13,10 +12,7 @@ router.post('/events/:id/scan', requireLogin, async (req, res) => {
   if (req.user.role === 'checkin' && !isEventToday(ev)) {
     return res.status(403).json({ error: 'Chỉ được quét vào đúng ngày tổ chức sự kiện' });
   }
-  if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
-  }
+  const perm = await requirePerm(req, res, ev, 'checkin'); if (!perm.ok) return;
   const token = String(req.body.token || '').trim();
   if (!token) return res.status(400).json({ error: 'Không đọc được mã' });
 
@@ -45,12 +41,7 @@ router.post('/events/:id/scan', requireLogin, async (req, res) => {
   }
 
   let boothId = req.body.booth_id ? Number(req.body.booth_id) : null;
-  if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
-    if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không quét mã / check-in' });
-    boothId = mine.booth_id || null;
-  }
+  if (req.user.role === 'checkin') boothId = perm.assignment.boothId || null; // ép theo phân công, bỏ qua booth_id client gửi
 
   // ----- Quét tại BOOTH -----
   if (boothId) {
@@ -86,10 +77,7 @@ router.post('/events/:id/scan', requireLogin, async (req, res) => {
 
 router.post('/events/:id/checkin/:attendeeId', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không check-in' });
-  }
+  const perm = await requirePerm(req, res, ev, 'checkin'); if (!perm.ok) return;
   const a = await db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(req.params.attendeeId, ev.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy người tham dự' });
   if (a.checked_in_at) return res.status(409).json({ error: 'Người này đã check-in rồi' });
@@ -100,14 +88,12 @@ router.post('/events/:id/checkin/:attendeeId', requireLogin, async (req, res) =>
 router.post('/events/:id/walkin', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   if (req.user.role === 'checkin' && !isEventToday(ev)) return res.status(403).json({ error: 'Chỉ được thêm khách vào đúng ngày tổ chức sự kiện' });
+  const perm = await requirePerm(req, res, ev, 'checkin'); if (!perm.ok) return;
   const { name, email, phone, position, company, tax_code, company_size, salutation, importance } = req.body;
   if (!name) return res.status(400).json({ error: 'Cần nhập Họ và tên' });
   let boothId = req.body.booth_id ? Number(req.body.booth_id) : null;
   if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    if (!mine) return res.status(403).json({ error: 'Bạn chưa được gán vào sự kiện này' });
-    if (VIEW_ONLY_TYPES.includes(mine.staff_type)) return res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không thêm khách' });
-    boothId = mine.booth_id || null;
+    boothId = perm.assignment.boothId || null;
   } else if (boothId && !(await db.prepare('SELECT 1 AS ok FROM booths WHERE id = ? AND event_id = ?').get(boothId, ev.id))) {
     boothId = null;
   }

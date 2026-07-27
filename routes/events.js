@@ -6,8 +6,11 @@ const XLSX = require('xlsx');
 const db = require('../db');
 const {
   requireLogin, requireRole, getEventOr404, canManageEvent, visibleEventsSql,
-  getEmailSettings, getAssignment, STAFF_TYPES, eligibilityJson,
+  getEmailSettings, eligibilityJson,
 } = require('./lib/helpers');
+const {
+  getAssignment, legacyStaffType, getLegacyRoleIdMap, getDefaultRoleId,
+} = require('./lib/permissions');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -22,9 +25,13 @@ router.get('/events', requireLogin, async (req, res) => {
     FROM events e JOIN users u ON u.id = e.created_by
     WHERE ${v.where} ORDER BY e.event_date DESC`).all(...v.params);
   if (req.user.role === 'checkin') {
-    const asg = await db.prepare('SELECT event_id, staff_type FROM event_staff WHERE user_id = ?').all(req.user.id);
-    const m = new Map(asg.map(a => [a.event_id, STAFF_TYPES.includes(a.staff_type) ? a.staff_type : 'checkin']));
-    rows.forEach(r => { r.my_staff_type = m.get(r.id) || 'checkin'; });
+    // Số sự kiện 1 nhân viên được gán thường nhỏ - lấy quyền theo từng sự kiện là đủ nhanh,
+    // không cần tối ưu 1 câu SQL gộp (khác GET /events/:id vốn chỉ 1 sự kiện).
+    for (const r of rows) {
+      const asg = await getAssignment(req.user, r.id);
+      r.my_permissions = asg ? [...asg.permissions] : [];
+      r.my_staff_type = legacyStaffType(asg); // tương thích ngược cho FE cũ (EventsView.vue)
+    }
   }
   res.json(rows);
 });
@@ -42,18 +49,23 @@ router.post('/events', requireLogin, requireRole('super_admin', 'admin'), async 
 
 router.get('/events/:id', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  const staff = (await db.prepare(`SELECT u.id, u.name, u.email, s.booth_id, s.staff_type FROM event_staff s JOIN users u ON u.id = s.user_id WHERE s.event_id = ?`).all(ev.id))
-    .map(s => ({ ...s, staff_type: STAFF_TYPES.includes(s.staff_type) ? s.staff_type : 'checkin' }));
+  const staff = (await db.prepare(`
+    SELECT u.id, u.name, u.email, s.booth_id, s.role_id, sr.name AS role_name
+    FROM event_staff s JOIN users u ON u.id = s.user_id
+    LEFT JOIN staff_roles sr ON sr.id = s.role_id
+    WHERE s.event_id = ?`).all(ev.id))
+    .map(s => ({ ...s, staff_type: legacyStaffType({ roleName: s.role_name }) })); // tương thích ngược FE cũ
   const booths = await db.prepare('SELECT * FROM booths WHERE event_id = ? ORDER BY sort, id').all(ev.id);
-  let my_position;
+  let my_position, my_permissions;
   if (req.user.role === 'checkin') {
-    const mine = await getAssignment(req.user, ev.id);
-    const boothId = mine ? mine.booth_id : null;
+    const asg = await getAssignment(req.user, ev.id);
+    const boothId = asg ? asg.boothId : null;
     const b = boothId ? booths.find(x => x.id === boothId) : null;
-    my_position = { booth_id: b ? b.id : null, name: b ? b.name : 'Cổng check-in', staff_type: mine ? mine.staff_type : 'checkin' };
+    my_position = { booth_id: b ? b.id : null, name: b ? b.name : 'Cổng check-in', staff_type: legacyStaffType(asg) };
+    my_permissions = asg ? [...asg.permissions] : [];
   }
   const badge_count = (await db.prepare('SELECT COUNT(*) AS c FROM badges WHERE event_id = ?').get(ev.id)).c;
-  res.json({ ...ev, staff, booths, my_position, badge_count, can_manage: canManageEvent(req.user, ev) });
+  res.json({ ...ev, staff, booths, my_position, my_permissions, badge_count, can_manage: canManageEvent(req.user, ev) });
 });
 
 router.put('/events/:id', requireLogin, async (req, res) => {
@@ -106,7 +118,9 @@ router.delete('/events/:id', requireLogin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Gán nhân viên check-in cho sự kiện
+// Gán nhân viên vào sự kiện (thay toàn bộ danh sách). Nhận `role_id` (mô hình quyền tick-chọn
+// mới, xem migrations/20260727010000_staff_permissions.js) - vẫn chấp nhận `staff_type` cũ để
+// FE cũ chưa cập nhật không bị gãy (tự quy đổi sang role mẫu tương ứng).
 router.put('/events/:id/staff', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
@@ -116,14 +130,38 @@ router.put('/events/:id/staff', requireLogin, async (req, res) => {
     assignments = ids.map(id => ({ user_id: id, booth_id: null }));
   }
   const validBooths = new Set((await db.prepare('SELECT id FROM booths WHERE event_id = ?').all(ev.id)).map(b => b.id));
+  const legacyRoleIdMap = await getLegacyRoleIdMap();
+  const defaultRoleId = await getDefaultRoleId();
   await db.prepare('DELETE FROM event_staff WHERE event_id = ?').run(ev.id);
-  const ins = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id, staff_type) VALUES (?,?,?,?)');
+  const ins = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id, role_id, extra_permissions) VALUES (?,?,?,?,?)');
   for (const a of assignments) {
-    const type = STAFF_TYPES.includes(a.staff_type) ? a.staff_type : 'checkin';
     let bid = a.booth_id && validBooths.has(Number(a.booth_id)) ? Number(a.booth_id) : null;
-    if (type === 'reception' || type === 'manager') bid = null;
-    await ins.run(ev.id, a.user_id, bid, type);
+    let roleId = Number(a.role_id) || null;
+    if (!roleId && a.staff_type) {
+      roleId = legacyRoleIdMap[a.staff_type] || null;
+      if (a.staff_type === 'reception' || a.staff_type === 'manager') bid = null; // giữ đúng quy tắc cũ
+    }
+    if (!roleId) roleId = defaultRoleId;
+    const extra = a.extra_permissions ? JSON.stringify(a.extra_permissions) : null;
+    await ins.run(ev.id, a.user_id, bid, roleId, extra);
   }
+  res.json({ ok: true });
+});
+
+// Đổi quyền/vị trí NHANH cho 1 người (không cần gửi lại toàn bộ danh sách nhân viên) - dùng cho
+// màn hình đổi việc tại hiện trường (mục 3 kế hoạch nâng cấp: "đổi việc ≤ 3 chạm").
+router.put('/events/:id/staff/:userId', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  const exists = await db.prepare('SELECT 1 AS ok FROM event_staff WHERE event_id = ? AND user_id = ?').get(ev.id, req.params.userId);
+  if (!exists) return res.status(404).json({ error: 'Người này chưa được gán vào sự kiện' });
+  const b = req.body;
+  const roleId = Number(b.role_id) || (await getDefaultRoleId());
+  const validBooth = b.booth_id ? await db.prepare('SELECT 1 AS ok FROM booths WHERE id = ? AND event_id = ?').get(b.booth_id, ev.id) : null;
+  const boothId = validBooth ? Number(b.booth_id) : null;
+  const extra = b.extra_permissions ? JSON.stringify(b.extra_permissions) : null;
+  await db.prepare('UPDATE event_staff SET role_id = ?, booth_id = ?, extra_permissions = ? WHERE event_id = ? AND user_id = ?')
+    .run(roleId, boothId, extra, ev.id, req.params.userId);
   res.json({ ok: true });
 });
 
@@ -138,7 +176,8 @@ router.post('/events/:id/staff/create', requireLogin, requireRole('super_admin',
   const unit = req.user.role === 'admin' ? req.user.unit : (ev.unit || '');
   const info = await db.prepare("INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,'checkin')")
     .run(name.trim(), department || '', unit, email.trim(), bcrypt.hashSync(password, 10));
-  await db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id) VALUES (?,?)').run(ev.id, info.lastInsertRowid);
+  await db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, role_id) VALUES (?,?,?)')
+    .run(ev.id, info.lastInsertRowid, await getDefaultRoleId());
   res.json({ id: info.lastInsertRowid });
 });
 
@@ -164,9 +203,10 @@ router.post('/events/:id/staff/import', requireLogin, requireRole('super_admin',
   const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
   const unit = req.user.role === 'admin' ? req.user.unit : (ev.unit || '');
+  const defaultRoleId = await getDefaultRoleId();
   let added = 0, assigned = 0; const errors = [];
   const insUser = db.prepare("INSERT INTO users (name, department, unit, email, password_hash, role) VALUES (?,?,?,?,?,'checkin')");
-  const insStaff = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id) VALUES (?,?,NULL)');
+  const insStaff = db.prepare('INSERT IGNORE INTO event_staff (event_id, user_id, booth_id, role_id) VALUES (?,?,NULL,?)');
   for (const [i, r] of rows.entries()) {
     const name = String(r['Họ và tên'] || '').trim();
     const email = String(r['Email đăng nhập'] || r['Email'] || '').trim();
@@ -175,13 +215,13 @@ router.post('/events/:id/staff/import', requireLogin, requireRole('super_admin',
     if (!name && !email) continue;
     const exist = await db.prepare('SELECT id, role FROM users WHERE email = ?').get(email);
     if (exist) {
-      if (exist.role === 'checkin') { await insStaff.run(ev.id, exist.id); assigned++; }
+      if (exist.role === 'checkin') { await insStaff.run(ev.id, exist.id, defaultRoleId); assigned++; }
       else errors.push(`Dòng ${i + 2}: email ${email} đang dùng cho vai trò khác - bỏ qua`);
       continue;
     }
     if (!name || !email || !password) { errors.push(`Dòng ${i + 2}: thiếu Họ tên, Email hoặc Mật khẩu`); continue; }
     const info = await insUser.run(name, dept, unit, email, bcrypt.hashSync(password, 10));
-    await insStaff.run(ev.id, info.lastInsertRowid);
+    await insStaff.run(ev.id, info.lastInsertRowid, defaultRoleId);
     added++;
   }
   res.json({ added, assigned, errors });

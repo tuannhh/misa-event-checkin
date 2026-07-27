@@ -2,7 +2,8 @@
 // có thể là mã thẻ) và routes/monitor.js (tra khách bằng mã thẻ - "giám sát bóng ma").
 const QRCode = require('qrcode');
 const db = require('../../db');
-const { isEventToday, getAssignment, canManageEvent, VIEW_ONLY_TYPES } = require('./helpers');
+const { isEventToday, canManageEvent } = require('./helpers');
+const { getAssignment, hasPerm } = require('./permissions');
 
 async function findBadge(eventId, token) {
   let code = token;
@@ -25,8 +26,8 @@ async function badgesOfAttendee(attendeeId) {
 async function badgeOpGuard(req, res, ev) {
   if (req.user.role === 'checkin') {
     if (!isEventToday(ev)) { res.status(403).json({ error: 'Chỉ thao tác thẻ vào đúng ngày tổ chức sự kiện' }); return false; }
-    const mine = await getAssignment(req.user, ev.id);
-    if (mine && VIEW_ONLY_TYPES.includes(mine.staff_type)) { res.status(403).json({ error: 'Vị trí của bạn chỉ được xem, không gán thẻ' }); return false; }
+    const asg = await getAssignment(req.user, ev.id);
+    if (!hasPerm(asg, 'assign_badge')) { res.status(403).json({ error: 'Bạn không có quyền gán thẻ' }); return false; }
     return true;
   }
   if (!canManageEvent(req.user, ev)) { res.status(403).json({ error: 'Bạn không có quyền' }); return false; }

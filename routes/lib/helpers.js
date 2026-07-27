@@ -18,9 +18,6 @@ const ELIGIBILITY_FIELDS = {
   company_size: { label: 'Quy mô nhân sự', options: COMPANY_SIZES },
   salutation: { label: 'Xưng hô', options: SALUTATIONS },
 };
-const STAFF_TYPES = ['checkin', 'reception', 'supervisor', 'manager'];
-const VIEW_ONLY_TYPES = ['supervisor', 'manager'];
-
 async function requireLogin(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: 'Chưa đăng nhập' });
   req.user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
@@ -75,11 +72,6 @@ async function getEmailSettings(eventId) {
   await db.prepare('INSERT IGNORE INTO email_settings (event_id) VALUES (?)').run(eventId);
   return db.prepare('SELECT * FROM email_settings WHERE event_id = ?').get(eventId);
 }
-async function getAssignment(user, eventId) {
-  const row = await db.prepare('SELECT booth_id, staff_type FROM event_staff WHERE event_id = ? AND user_id = ?').get(eventId, user.id);
-  if (!row) return null;
-  return { booth_id: row.booth_id || null, staff_type: STAFF_TYPES.includes(row.staff_type) ? row.staff_type : 'checkin' };
-}
 function validateNewUserRole(actor, role, unit) {
   if (!ROLES.includes(role)) return 'Vai trò không hợp lệ';
   if (actor.role === 'admin') {
@@ -96,8 +88,7 @@ function eligibilityJson(field, values) {
 
 module.exports = {
   POSITIONS, COMPANY_SIZES, ROLES, SALUTATIONS, IMPORTANCES, ELIGIBILITY_FIELDS,
-  STAFF_TYPES, VIEW_ONLY_TYPES,
   requireLogin, requireRole, visibleEventsSql, canViewEvent, canManageEvent, getEventOr404,
-  newToken, isEligible, fmtVN, isEventToday, getEmailSettings, getAssignment,
+  newToken, isEligible, fmtVN, isEventToday, getEmailSettings,
   validateNewUserRole, eligibilityJson,
 };

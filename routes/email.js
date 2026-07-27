@@ -101,7 +101,7 @@ router.post('/smtp/test', requireLogin, requireRole('super_admin', 'admin'), asy
     await deliver(t, {
       to: req.user.email,
       subject: 'Email kiểm tra - MISA Event Check-in',
-      html: `Cấu hình email của bạn đã hoạt động! ✔ (Kênh gửi: ${t.provider === 'brevo' ? 'Brevo' : 'SMTP'})`,
+      html: `Cấu hình email của bạn đã hoạt động! (Kênh gửi: ${t.provider === 'brevo' ? 'Brevo' : 'SMTP'})`,
     });
     res.json({ ok: true, message: `Đã gửi email kiểm tra tới ${req.user.email} qua ${t.provider === 'brevo' ? 'Brevo' : 'SMTP'}` });
   } catch (e) { res.status(400).json({ error: 'Gửi thất bại: ' + e.message }); }

@@ -8,6 +8,7 @@ import MSelect from '../../components/mds/MSelect.vue';
 import MCheckbox from '../../components/mds/MCheckbox.vue';
 import MDialog from '../../components/mds/MDialog.vue';
 import MTag from '../../components/mds/MTag.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -19,7 +20,7 @@ const rowState = reactive({}); // uid -> { checked, role_id, booth_id }
 const fileInput = ref(null);
 
 const roleOptions = computed(() => roles.value.map(r => ({ value: String(r.id), label: r.is_template ? r.name : `${r.name} (riêng)` })));
-const boothOptions = computed(() => [{ value: '', label: '🚪 Cổng check-in (ghi nhận tham dự)' }, ...booths.value.map(b => ({ value: String(b.id), label: '🧭 Booth: ' + b.name }))]);
+const boothOptions = computed(() => [{ value: '', label: 'Cổng check-in (ghi nhận tham dự)' }, ...booths.value.map(b => ({ value: String(b.id), label: 'Booth: ' + b.name }))]);
 const roleById = computed(() => Object.fromEntries(roles.value.map(r => [String(r.id), r])));
 
 async function load() {
@@ -126,21 +127,21 @@ async function deleteRole(r) {
     <div class="page-head" style="margin-bottom:6px">
       <h3>Nhân viên check-in của sự kiện</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <a class="lnk-btn" :href="`/api/events/${ev.id}/staff/template`" download>⬇ Excel mẫu</a>
-        <MButton variant="secondary" @click="fileInput.click()">⬆ Import Excel</MButton>
+        <a class="lnk-btn" :href="`/api/events/${ev.id}/staff/template`" download><MIcon name="download" /> Excel mẫu</a>
+        <MButton variant="secondary" @click="fileInput.click()"><MIcon name="upload" /> Import Excel</MButton>
         <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
-        <MButton variant="secondary" @click="rolesDlgOpen = true">🧩 Nhóm chức năng</MButton>
+        <MButton variant="secondary" @click="rolesDlgOpen = true"><MIcon name="puzzle" /> Nhóm chức năng</MButton>
         <MButton variant="primary" @click="openNew">+ Tạo tài khoản nhân viên mới</MButton>
       </div>
     </div>
-    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>nhóm chức năng</b> và <b>vị trí</b>. Nhóm chưa đúng ý? Bấm "🧩 Nhóm chức năng" để tạo nhóm riêng, tick đúng quyền cần cho sự kiện này.</p>
+    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>nhóm chức năng</b> và <b>vị trí</b>. Nhóm chưa đúng ý? Bấm "Nhóm chức năng" để tạo nhóm riêng, tick đúng quyền cần cho sự kiện này.</p>
 
     <div v-if="all.length" class="card" style="padding:0;overflow-x:auto">
       <table class="tbl">
         <thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Nhóm chức năng</th><th>Vị trí</th></tr></thead>
         <tbody>
           <tr v-for="u in all" :key="u.id">
-            <td><input type="checkbox" v-model="rowState[u.id].checked" @change="onRoleChange(u.id)" /></td>
+            <td><MCheckbox v-model="rowState[u.id].checked" @change="onRoleChange(u.id)" /></td>
             <td><b>{{ u.name }}</b><br><span class="muted">{{ u.email }}<template v-if="u.unit"> · {{ u.unit }}</template></span></td>
             <td style="min-width:200px"><MSelect v-model="rowState[u.id].role_id" :options="roleOptions" :disabled="!rowState[u.id].checked" @update:modelValue="onRoleChange(u.id)" /></td>
             <td style="min-width:220px"><MSelect v-model="rowState[u.id].booth_id" :options="boothOptions" :disabled="posDisabled(u.id)" /></td>
@@ -150,7 +151,7 @@ async function deleteRole(r) {
     </div>
     <p v-else class="muted">Chưa có tài khoản nhân viên check-in nào. Bấm "+ Tạo tài khoản nhân viên mới".</p>
 
-    <MButton variant="primary" style="margin-top:14px" @click="save">💾 Lưu danh sách</MButton>
+    <MButton variant="primary" style="margin-top:14px" @click="save"><MIcon name="device-floppy" /> Lưu danh sách</MButton>
   </div>
 
   <MDialog v-model="dlgOpen" type="confirm" confirm-text="Tạo & gán" title="Tạo tài khoản Nhân viên check-in" :width="520" @confirm="createStaff">
@@ -188,7 +189,7 @@ async function deleteRole(r) {
         </div>
         <div style="display:flex;gap:8px;margin-top:14px">
           <MButton variant="secondary" @click="openRoleNew" v-if="editingId">Huỷ sửa, tạo mới</MButton>
-          <MButton variant="primary" @click="saveRole">💾 Lưu nhóm chức năng</MButton>
+          <MButton variant="primary" @click="saveRole"><MIcon name="device-floppy" /> Lưu nhóm chức năng</MButton>
         </div>
       </div>
     </div>

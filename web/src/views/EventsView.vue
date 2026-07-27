@@ -11,6 +11,7 @@ import MTag from '../components/mds/MTag.vue';
 import MCheckbox from '../components/mds/MCheckbox.vue';
 import MSpinner from '../components/mds/MSpinner.vue';
 import MEmptyState from '../components/mds/MEmptyState.vue';
+import MIcon from '../components/mds/MIcon.vue';
 
 const router = useRouter();
 const toast = useToast();
@@ -37,10 +38,15 @@ function statusOf(ev) {
   return { color: 'success', text: 'Đang diễn ra hôm nay' };
 }
 function locked(ev) { return isStaff.value && eventDayStatus(ev) !== 'today' && needsOnsite(ev); }
-const OPEN_BTN_TEXT = { scan: '📷 Vào quét', monitor: '📝 Vào ghi chú', reception: '🖨 Vào lễ tân', dashboard: '📊 Xem số liệu' };
+const OPEN_BTN_TEXT = { scan: 'Vào quét', monitor: 'Vào ghi chú', reception: 'Vào lễ tân', dashboard: 'Xem số liệu' };
+const OPEN_BTN_ICON = { scan: 'camera', monitor: 'pencil', reception: 'printer', dashboard: 'chart-bar' };
 function openBtnText(ev) {
   if (!isStaff.value) return 'Mở';
   return OPEN_BTN_TEXT[staffTabsFor(ev)[0].key] || 'Mở';
+}
+function openBtnIcon(ev) {
+  if (!isStaff.value) return null;
+  return OPEN_BTN_ICON[staffTabsFor(ev)[0].key] || null;
 }
 function openEvent(ev) { if (!locked(ev)) router.push('/event/' + ev.id); }
 
@@ -96,7 +102,7 @@ async function save() {
   </div>
 
   <div v-if="isStaff && events.length" class="hint">
-    📅 Bạn chỉ mở được sự kiện tổ chức <b>đúng ngày hôm nay</b>. Sự kiện chưa tới ngày hoặc đã kết thúc sẽ bị khoá.
+    <MIcon name="calendar" /> Bạn chỉ mở được sự kiện tổ chức <b>đúng ngày hôm nay</b>. Sự kiện chưa tới ngày hoặc đã kết thúc sẽ bị khoá.
   </div>
 
   <div v-if="loading" style="text-align:center;padding:40px"><MSpinner :size="28" /></div>
@@ -109,8 +115,8 @@ async function save() {
       <div class="ev-main">
         <div class="ev-name" :class="{ clickable: !locked(ev) }" @click="openEvent(ev)">{{ ev.name }}</div>
         <div class="muted ev-meta">
-          🕒 {{ fmtDate(ev.event_date) }} · 👤 {{ ev.organizer || '—' }}
-          <template v-if="ev.unit"> · 🏢 {{ ev.unit }}</template>
+          <MIcon name="clock" /> {{ fmtDate(ev.event_date) }} · <MIcon name="user" /> {{ ev.organizer || '—' }}
+          <template v-if="ev.unit"> · <MIcon name="building" /> {{ ev.unit }}</template>
           <template v-if="!isStaff"> · Tạo bởi: {{ ev.creator_name }}</template>
         </div>
       </div>
@@ -121,8 +127,8 @@ async function save() {
         </template>
         <MTag :color="statusOf(ev).color">{{ statusOf(ev).text }}</MTag>
         <MButton v-if="!isStaff" variant="secondary" size="md" @click="openEdit(ev)">Sửa</MButton>
-        <MButton v-if="locked(ev)" variant="secondary" size="md" disabled>🔒 Khoá</MButton>
-        <MButton v-else variant="primary" size="md" @click="openEvent(ev)">{{ openBtnText(ev) }}</MButton>
+        <MButton v-if="locked(ev)" variant="secondary" size="md" disabled><MIcon name="lock" /> Khoá</MButton>
+        <MButton v-else variant="primary" size="md" @click="openEvent(ev)"><MIcon v-if="openBtnIcon(ev)" :name="openBtnIcon(ev)" /> {{ openBtnText(ev) }}</MButton>
       </div>
     </div>
   </div>
@@ -139,7 +145,7 @@ async function save() {
       <MInput v-model="form.unit" placeholder="VD: Công ty X" />
     </template>
     <div class="elig">
-      <b>🎯 Điều kiện đủ tham dự</b>
+      <b><MIcon name="circle-check" /> Điều kiện đủ tham dự</b>
       <p class="muted" style="margin:4px 0 8px">Người KHÔNG đạt vẫn hiện trong danh sách nhưng bị khoá gửi email.</p>
       <MSelect v-model="form.eligibility_field" :options="[{ value: '', label: 'Không áp dụng - tất cả đều đủ' }, ...eligFields]" />
       <div v-if="eligOptions.length" style="margin-top:8px">
@@ -152,12 +158,13 @@ async function save() {
 
 <style scoped>
 .hint { background: var(--mds-brand-50, #eff6ff); border: 1px solid var(--mds-brand-200, #bfdbfe); color: var(--mds-brand-700, #1e40af); border-radius: 10px; padding: 12px 14px; font-size: 13px; margin-bottom: 14px; }
-.ev-card { background: #fff; border: 1px solid var(--app-border); border-radius: 12px; padding: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ev-card { background: #fff; border-radius: 8px; box-shadow: 0 0 2px 0 rgba(0,0,0,0.10); padding: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
 .ev-name { font-size: 16px; font-weight: 700; color: var(--mds-brand-700, #1d4ed8); }
 .ev-name.clickable { cursor: pointer; }
 .ev-name.clickable:hover { text-decoration: underline; }
 .ev-meta { font-size: 13px; margin-top: 4px; }
 .ev-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.native-dt { width: 100%; padding: 8px 11px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; font-family: inherit; }
+.native-dt { width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--mds-border); border-radius: 8px; font-size: 13px; font-family: inherit; color: var(--mds-text); }
+.native-dt:focus { outline: 2px solid var(--mds-brand-600); outline-offset: -1px; border-color: var(--mds-brand-600); }
 .elig { border: 1px dashed var(--app-border); border-radius: 10px; padding: 12px; margin-top: 14px; }
 </style>

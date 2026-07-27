@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, onMounted } from 'vue';
 import MTextarea from './mds/MTextarea.vue';
+import MIcon from './mds/MIcon.vue';
 
 // Trình soạn nội dung email 2 CHẾ ĐỘ XEM của CÙNG MỘT NGUỒN SỰ THẬT: chuỗi HTML
 // (props.modelValue/v-model). Chuyển tab KHÔNG có bước chuyển đổi dữ liệu nào - Văn bản là
@@ -40,7 +41,7 @@ function insertLink() {
   if (url) exec('createLink', url);
 }
 
-// Chèn nội dung gợi ý (nút "✨ Chèn nội dung gợi ý" ở EmailTab.vue) - ghi thẳng HTML, không qua
+// Chèn nội dung gợi ý (nút "Chèn nội dung gợi ý" ở EmailTab.vue) - ghi thẳng HTML, không qua
 // bước chuyển đổi nào nên không mất định dạng.
 function insert(_legacyText, htmlVal) {
   emit('update:modelValue', htmlVal);
@@ -52,7 +53,7 @@ defineExpose({ insert, mode });
 <template>
   <label class="fld">Nội dung email</label>
   <div class="body-tabs">
-    <button type="button" class="body-tab" :class="{ active: mode === 'text' }" @click="switchMode('text')">📝 Văn bản (dễ dùng)</button>
+    <button type="button" class="body-tab" :class="{ active: mode === 'text' }" @click="switchMode('text')"><MIcon name="pencil" /> Văn bản (dễ dùng)</button>
     <button type="button" class="body-tab" :class="{ active: mode === 'html' }" @click="switchMode('html')">&lt;/&gt; HTML (nâng cao)</button>
   </div>
 
@@ -62,13 +63,13 @@ defineExpose({ insert, mode });
       <button type="button" title="Nghiêng" @mousedown.prevent @click="exec('italic')"><i>I</i></button>
       <button type="button" title="Gạch chân" @mousedown.prevent @click="exec('underline')"><u>U</u></button>
       <span class="rt-sep"></span>
-      <button type="button" title="Căn trái" @mousedown.prevent @click="exec('justifyLeft')">⇤</button>
-      <button type="button" title="Căn giữa" @mousedown.prevent @click="exec('justifyCenter')">⇔</button>
-      <button type="button" title="Căn phải" @mousedown.prevent @click="exec('justifyRight')">⇥</button>
-      <button type="button" title="Căn đều 2 bên" @mousedown.prevent @click="exec('justifyFull')">☰</button>
+      <button type="button" title="Căn trái" @mousedown.prevent @click="exec('justifyLeft')"><MIcon name="align-left" /></button>
+      <button type="button" title="Căn giữa" @mousedown.prevent @click="exec('justifyCenter')"><MIcon name="align-center" /></button>
+      <button type="button" title="Căn phải" @mousedown.prevent @click="exec('justifyRight')"><MIcon name="align-right" /></button>
+      <button type="button" title="Căn đều 2 bên" @mousedown.prevent @click="exec('justifyFull')"><MIcon name="align-justify" /></button>
       <span class="rt-sep"></span>
-      <button type="button" title="Danh sách gạch đầu dòng" @mousedown.prevent @click="exec('insertUnorderedList')">•—</button>
-      <button type="button" title="Chèn liên kết" @mousedown.prevent @click="insertLink">🔗</button>
+      <button type="button" title="Danh sách gạch đầu dòng" @mousedown.prevent @click="exec('insertUnorderedList')"><MIcon name="list" /></button>
+      <button type="button" title="Chèn liên kết" @mousedown.prevent @click="insertLink"><MIcon name="link" /></button>
     </div>
     <div ref="editorRef" class="rich-editor" contenteditable="true" @input="onEditorInput"></div>
     <p class="muted" style="font-size:12px;margin-top:4px">{{ varHint }}</p>

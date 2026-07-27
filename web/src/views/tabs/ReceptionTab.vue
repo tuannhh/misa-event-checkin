@@ -8,6 +8,7 @@ import MInput from '../../components/mds/MInput.vue';
 import MTag from '../../components/mds/MTag.vue';
 import MDialog from '../../components/mds/MDialog.vue';
 import AttendeeFields from '../../components/AttendeeFields.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -42,10 +43,10 @@ async function saveWalkin() {
 </script>
 
 <template>
-  <div class="hint">🖨 Máy tính này nối máy in tem. Tra cứu khách → bấm <b>In QR</b> để in tem cho khách tự dán/quét. Khách chưa đăng ký → thêm <b>vãng lai</b> (tự in tem ngay).</div>
+  <div class="hint"><MIcon name="printer" /> Máy tính này nối máy in tem. Tra cứu khách → bấm <b>In QR</b> để in tem cho khách tự dán/quét. Khách chưa đăng ký → thêm <b>vãng lai</b> (tự in tem ngay).</div>
 
   <div class="toolbar">
-    <div style="flex:1;min-width:220px"><MInput v-model="q" placeholder="🔍 Tìm theo tên, công ty, SĐT, email..." clearable /></div>
+    <div style="flex:1;min-width:220px"><MInput v-model="q" placeholder="Tìm theo tên, công ty, SĐT, email..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
     <MButton variant="primary" @click="openWalkin">+ Khách vãng lai</MButton>
   </div>
   <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ rows.length }}</b> khách</div>
@@ -57,11 +58,11 @@ async function saveWalkin() {
         <tr v-for="r in filtered" :key="r.id">
           <td><span class="name-tags"><b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b><MTag v-if="r.is_walkin" color="warning" size="sm">Vãng lai</MTag></span></td>
           <td>{{ r.company }}</td><td>{{ r.position }}</td>
-          <td><MTag v-if="r.checked_in_at" color="success" size="sm">✓ {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
+          <td><MTag v-if="r.checked_in_at" color="success" size="sm"><MIcon name="check" /> {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
           <td style="white-space:nowrap;text-align:right">
             <span class="cell-actions" style="justify-content:flex-end">
               <MButton v-if="!r.checked_in_at" variant="primary" size="md" @click="checkin(r)">Check-in</MButton>
-              <MButton variant="secondary" size="md" @click="printQr(r, props.ev.id)">🖨 In QR</MButton>
+              <MButton variant="secondary" size="md" @click="printQr(r, props.ev.id)"><MIcon name="printer" /> In QR</MButton>
             </span>
           </td>
         </tr>

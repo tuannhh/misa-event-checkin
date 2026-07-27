@@ -1,22 +1,48 @@
 <script setup>
-import { computed } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
-import { auth, logout, ROLE_NAMES } from './api';
+import { computed, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { auth, logout, eventSidebar, ROLE_NAMES } from './api';
+import { useToast } from './components/mds/toast.js';
 import MToast from './components/mds/MToast.vue';
+import MIcon from './components/mds/MIcon.vue';
+import MHeaderBar from './components/mds/MHeaderBar.vue';
+import MSidebar from './components/mds/MSidebar.vue';
+import MSettingsDialog from './components/mds/MSettingsDialog.vue';
 import LoginView from './views/LoginView.vue';
 import logoUrl from './assets/logo.svg';
+import logoIconUrl from './assets/logo-icon.svg';
 
 const router = useRouter();
-const route = useRoute();
+const toast = useToast();
 const isManager = computed(() => auth.user && ['super_admin', 'admin'].includes(auth.user.role));
 // Nhân viên hiện trường (checkin) dùng shell mobile-first Ở MỌI ĐỘ RỘNG cửa sổ - không phụ
 // thuộc viewport thật, để chế độ "Desktop site" của Chrome Android (bỏ qua thẻ <meta viewport>)
 // không còn phá được layout (mục 4 kế hoạch nâng cấp - vấn đề chủ dự án phản ánh cực kỳ tệ trên
-// mobile). Admin/super_admin vẫn dùng shell desktop như cũ.
+// mobile). Admin/super_admin vẫn dùng App Shell chuẩn MDS (header + sidebar trái).
 const isFieldStaff = computed(() => auth.user && auth.user.role === 'checkin');
 
+// Sidebar trái DUY NHẤT của App Shell. Trong 1 sự kiện -> hiện đúng các tab tính năng của
+// sự kiện đó (do EventDetailView.vue đẩy lên qua eventSidebar - xem api.js), PHẢI là nội
+// dung chính của sidebar, không lồng thêm 1 sidebar phụ khác. Ngoài sự kiện (màn hình danh
+// sách) -> chỉ còn đúng 1 lối vào "Sự kiện"; Thành viên/Cấu hình Email đã gom vào dialog
+// Thiết lập (nút bánh răng trên header) theo yêu cầu chủ dự án - không còn là mục sidebar.
+const navItems = computed(() => eventSidebar.active
+  ? eventSidebar.items
+  : [{ key: 'events', label: 'Sự kiện', icon: 'calendar' }]);
+const activeNav = computed(() => eventSidebar.active ? eventSidebar.activeKey : 'events');
+function onNavSelect(key) {
+  if (eventSidebar.active) { eventSidebar.onSelect?.(key); return; }
+  router.push('/events');
+}
+const sidebarCollapsed = ref(false);
+
+const headerUser = computed(() => auth.user ? {
+  name: `${auth.user.name} · ${ROLE_NAMES[auth.user.role] || auth.user.role}${auth.user.unit ? ' · ' + auth.user.unit : ''}`,
+} : null);
+
+const settingsOpen = ref(false);
+
 async function doLogout() { await logout(); router.replace('/events'); }
-const isActive = (prefix) => route.path.startsWith(prefix);
 </script>
 
 <template>
@@ -25,24 +51,40 @@ const isActive = (prefix) => route.path.startsWith(prefix);
       <header class="field-topbar">
         <img :src="logoUrl" alt="MISA Event Check-in" class="field-logo" />
         <span class="field-who">{{ auth.user.name }}</span>
-        <button class="field-logout" @click="doLogout" aria-label="Đăng xuất">⏻</button>
+        <button class="field-logout" @click="doLogout" aria-label="Đăng xuất"><MIcon name="logout" :size="20" /></button>
       </header>
       <div class="field-shell"><RouterView /></div>
     </template>
     <template v-else>
-      <header class="topbar">
-        <div class="topbar-inner">
-          <img :src="logoUrl" alt="MISA Event Check-in" class="logo" />
-          <nav>
-            <RouterLink to="/events" :class="{ active: isActive('/event') }">Sự kiện</RouterLink>
-            <RouterLink v-if="isManager" to="/members" :class="{ active: isActive('/members') }">Thành viên</RouterLink>
-            <RouterLink v-if="isManager" to="/smtp" :class="{ active: isActive('/smtp') }">Cấu hình Email</RouterLink>
-          </nav>
-          <span class="who">{{ auth.user.name }} · {{ ROLE_NAMES[auth.user.role] }}<template v-if="auth.user.unit"> · {{ auth.user.unit }}</template></span>
-          <button class="logout" @click="doLogout">Đăng xuất</button>
+      <div class="app-shell">
+        <MHeaderBar
+          app-name="MISA Check-in"
+          :company-name="eventSidebar.active ? eventSidebar.eventName : ''"
+          search-placeholder="Tìm sự kiện, thành viên..."
+          :user="headerUser"
+          @app-switcher="toast.info('Chuyển ứng dụng là tính năng của AMIS Platform, chưa tích hợp trong bản này.')"
+          @settings="settingsOpen = true"
+          @notifications="toast.info('Chưa có thông báo mới.')"
+          @assistant="toast.info('MISA AVA chưa được tích hợp trong bản này.')"
+          @chat="toast.info('AMIS Chat chưa được tích hợp trong bản này.')"
+          @help="toast.info('Xem hướng dẫn sử dụng ở tài liệu đi kèm dự án.')"
+          @more="toast.info('Chưa có thêm tiện ích khác.')"
+          @logo-click="router.push('/events')"
+          @company-click="router.push('/events')"
+        >
+          <template #logo>
+            <img :src="logoIconUrl" alt="MISA Check-in" class="header-logo" />
+          </template>
+          <template #actions>
+            <button class="logout" @click="doLogout">Đăng xuất</button>
+          </template>
+        </MHeaderBar>
+        <div class="app-body">
+          <MSidebar v-model="activeNav" v-model:collapsed="sidebarCollapsed" :items="navItems" @update:model-value="onNavSelect" />
+          <div class="app-content"><div class="app-container"><RouterView /></div></div>
         </div>
-      </header>
-      <div class="app-container"><RouterView /></div>
+      </div>
+      <MSettingsDialog v-model="settingsOpen" :show-admin-tabs="isManager" />
     </template>
   </template>
 
@@ -52,20 +94,14 @@ const isActive = (prefix) => route.path.startsWith(prefix);
 </template>
 
 <style scoped>
-.topbar { background: #fff; border-bottom: 1px solid var(--app-border); position: sticky; top: 0; z-index: 50; }
-.topbar-inner { max-width: 1200px; margin: 0 auto; padding: 0 16px; display: flex; align-items: center; gap: 18px; height: 56px; }
-.logo { height: 42px; width: auto; display: block; }
-nav { display: flex; gap: 4px; flex: 1; }
-nav a { padding: 8px 14px; border-radius: 8px; text-decoration: none; color: #374151; font-weight: 500; }
-nav a.active, nav a:hover { background: var(--mds-brand-50, #eff6ff); color: var(--mds-brand-600, #2563eb); }
-.who { color: #6b7280; font-size: 13px; white-space: nowrap; }
-.logout { border: 1px solid var(--app-border); background: #fff; color: #374151; border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; font-weight: 600; }
-.logout:hover { background: var(--app-bg); }
-@media (max-width: 640px) {
-  .topbar-inner { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
-  .who { display: none; }
-  nav { order: 3; width: 100%; }
-}
+/* App Shell chuẩn MDS: Global Header full-width trên cùng, dưới là Sidebar trái + Content
+   cuộn riêng (xem layout-patterns.md mục 0 "Khung ứng dụng chuẩn"). */
+.app-shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.app-body { flex: 1; display: flex; overflow: hidden; }
+.app-content { flex: 1; overflow-y: auto; background: var(--mds-bg-page, #ECEDEF); }
+.header-logo { height: 28px; width: auto; display: block; }
+.logout { border: 1px solid var(--mds-border); background: var(--mds-bg); color: var(--mds-text); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; font-weight: 600; }
+.logout:hover { background: var(--mds-bg-hover-soft); }
 
 /* Shell mobile-first cho nhân viên hiện trường - cột nội dung tối đa 480px, CĂN GIỮA bất kể
    màn hình rộng bao nhiêu (kể cả "Desktop site" trên Android). Bottom nav thật nằm trong

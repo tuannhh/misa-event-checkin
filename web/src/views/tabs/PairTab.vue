@@ -6,6 +6,7 @@ import { useScanner, vibrate } from '../../lib/scanner';
 import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
 import MTag from '../../components/mds/MTag.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -58,7 +59,7 @@ const { failed } = useScanner('pair-reader', handleToken);
 
 <template>
   <div class="hint">
-    🎫 <b>Gán thẻ cho khách:</b> Bước 1 — quét mã QR của khách (trên email/thẻ cũ). Bước 2 — quét mã phôi thẻ mới để gán.
+    <MIcon name="tag" /> <b>Gán thẻ cho khách:</b> Bước 1 — quét mã QR của khách (trên email/thẻ cũ). Bước 2 — quét mã phôi thẻ mới để gán.
     Khách <b>báo mất thẻ</b>: gán thẻ mới rồi bấm <b>Ngừng</b> thẻ cũ để chống gian lận.
   </div>
 
@@ -66,7 +67,7 @@ const { failed } = useScanner('pair-reader', handleToken);
     <div class="card">
       <div class="step-lbl">Bước {{ step }}: {{ step === 1 ? 'Quét mã QR của KHÁCH' : 'Quét mã PHÔI THẺ để gán' }}</div>
       <div v-if="!failed" id="pair-reader" class="qr-reader"></div>
-      <div v-else class="qr-fail">📷 Không mở được camera. Hãy nhập mã thủ công.</div>
+      <div v-else class="qr-fail"><MIcon name="camera" /> Không mở được camera. Hãy nhập mã thủ công.</div>
 
       <label class="fld">Nhập mã thủ công</label>
       <div style="display:flex;gap:8px">
@@ -74,12 +75,12 @@ const { failed } = useScanner('pair-reader', handleToken);
         <MButton variant="primary" @click="onManual">OK</MButton>
       </div>
 
-      <MButton v-if="guest" variant="secondary" style="margin-top:12px" @click="reset">↺ Chuyển sang khách mới</MButton>
+      <MButton v-if="guest" variant="secondary" style="margin-top:12px" @click="reset"><MIcon name="refresh" /> Chuyển sang khách mới</MButton>
     </div>
 
     <div class="card">
       <div v-if="!guest" class="r-idle">
-        <div style="font-size:44px">🎫</div>
+        <div style="font-size:44px;display:flex;justify-content:center"><MIcon name="tag" :size="44" /></div>
         <p class="muted">Quét mã QR của khách để bắt đầu gán thẻ.</p>
       </div>
       <template v-else>
@@ -87,7 +88,7 @@ const { failed } = useScanner('pair-reader', handleToken);
         <p class="muted" style="margin:4px 0 10px">{{ guest.attendee.company || '—' }}</p>
         <div style="margin-bottom:12px">
           Check-in:
-          <MTag v-if="guest.attendee.checked_in_at" color="success" size="sm">✓ {{ fmtDate(guest.attendee.checked_in_at, true) }}</MTag>
+          <MTag v-if="guest.attendee.checked_in_at" color="success" size="sm"><MIcon name="check" /> {{ fmtDate(guest.attendee.checked_in_at, true) }}</MTag>
           <MTag v-else color="neutral" size="sm">Chưa</MTag>
         </div>
         <div class="bd-title">Thẻ đã gán ({{ guest.badges.length }})</div>

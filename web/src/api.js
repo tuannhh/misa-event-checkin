@@ -6,6 +6,19 @@ export const auth = reactive({
   options: { positions: [], company_sizes: [], roles: [], salutations: [], importances: [], eligibility_fields: {} },
 });
 
+// Cầu nối sidebar chính (App.vue) <-> tab tính năng của sự kiện đang mở (EventDetailView.vue).
+// EventDetailView set active=true + items/activeKey/onSelect khi mount, tắt active khi rời
+// trang - để sidebar TRÁI DUY NHẤT của app hiển thị đúng tab tính năng thật (Người tham dự,
+// Quét QR...) làm nội dung chính, không còn là danh sách Sự kiện/Thành viên/Cấu hình Email
+// tách biệt (đã gom 2 mục sau vào dialog Thiết lập).
+export const eventSidebar = reactive({
+  active: false,
+  eventName: '',
+  items: [],
+  activeKey: '',
+  onSelect: null,
+});
+
 // Gọi API backend (giữ contract y như bản cũ). Session qua cookie same-origin.
 export async function api(path, opts = {}) {
   const isForm = opts.body instanceof FormData;
@@ -67,14 +80,14 @@ export function needsOnsite(ev) { return NEEDS_ONSITE_PERMS.some(p => can(ev, p)
 // - dùng chung giữa EventsView (nút mở nhanh) và EventDetailView (thanh tab đầy đủ).
 export function staffTabsFor(ev) {
   const t = [];
-  if (can(ev, 'checkin')) t.push({ key: 'scan', label: '📷 Quét QR' });
-  if (can(ev, 'assign_badge') && ev.badge_count) t.push({ key: 'pair', label: '🎫 Gán thẻ' });
+  if (can(ev, 'checkin')) t.push({ key: 'scan', label: 'Quét QR', icon: 'camera' });
+  if (can(ev, 'assign_badge') && ev.badge_count) t.push({ key: 'pair', label: 'Gán thẻ', icon: 'credit-card' });
   if (can(ev, 'view_checkin_list')) {
-    if (ev.my_position?.staff_type === 'reception') t.push({ key: 'reception', label: '🖨 Danh sách & In QR' });
-    else t.push({ key: 'attendees', label: '✅ Đã check-in' });
+    if (ev.my_position?.staff_type === 'reception') t.push({ key: 'reception', label: 'Danh sách & In QR', icon: 'printer' });
+    else t.push({ key: 'attendees', label: 'Đã check-in', icon: 'circle-check' });
   }
-  if (can(ev, 'note') || can(ev, 'mark_potential')) t.push({ key: 'monitor', label: '📝 Ghi chú booth' });
-  if (can(ev, 'view_report')) t.push({ key: 'report', label: '📊 Báo cáo' });
-  if (!t.length) t.push({ key: 'dashboard', label: '📊 Số liệu' }); // không quyền nào -> chỉ xem số liệu ẩn danh
+  if (can(ev, 'note') || can(ev, 'mark_potential')) t.push({ key: 'monitor', label: 'Ghi chú booth', icon: 'pencil' });
+  if (can(ev, 'view_report')) t.push({ key: 'report', label: 'Báo cáo', icon: 'chart-bar' });
+  if (!t.length) t.push({ key: 'dashboard', label: 'Số liệu', icon: 'chart-pie' }); // không quyền nào -> chỉ xem số liệu ẩn danh
   return t;
 }

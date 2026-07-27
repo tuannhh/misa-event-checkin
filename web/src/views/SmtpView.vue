@@ -6,6 +6,7 @@ import MButton from '../components/mds/MButton.vue';
 import MInput from '../components/mds/MInput.vue';
 import MCheckbox from '../components/mds/MCheckbox.vue';
 import MRadioGroup from '../components/mds/MRadioGroup.vue';
+import MIcon from '../components/mds/MIcon.vue';
 
 const toast = useToast();
 const s = reactive({
@@ -51,7 +52,7 @@ async function sendTest() {
   </div>
 
   <div v-if="s.provider === 'brevo'" class="card" style="max-width:560px">
-    <h3>⚡ Brevo</h3>
+    <h3><MIcon name="send" /> Brevo</h3>
     <p class="muted" style="margin:8px 0 12px">Nền tảng cloud thường chặn SMTP → dùng Brevo (miễn phí 300 email/ngày). Tạo API key tại brevo.com → SMTP &amp; API → API Keys.</p>
     <label class="fld">Brevo API Key</label>
     <MInput v-model="s.brevo_api_key" placeholder="xkeysib-..." />
@@ -60,7 +61,7 @@ async function sendTest() {
   </div>
 
   <div v-else-if="s.provider === 'gmail'" class="card" style="max-width:560px">
-    <h3>📮 Gmail</h3>
+    <h3><MIcon name="mail" /> Gmail</h3>
     <p class="muted" style="margin:8px 0 12px">Dùng khi chạy nội bộ (Cloud Run/Railway thường chặn cổng SMTP). Bật xác thực 2 lớp cho tài khoản Gmail rồi tạo App Password.</p>
     <label class="fld">Email Gmail</label>
     <MInput v-model="s.smtp_user" placeholder="ban@gmail.com" />
@@ -69,7 +70,7 @@ async function sendTest() {
   </div>
 
   <div v-else class="card" style="max-width:560px">
-    <h3>🖥 Tự cấu hình SMTP</h3>
+    <h3><MIcon name="settings" /> Tự cấu hình SMTP</h3>
     <p class="muted" style="margin:8px 0 12px">Dùng máy chủ mail riêng của công ty (không phải Gmail).</p>
     <div class="row2">
       <div><label class="fld">Máy chủ SMTP</label><MInput v-model="s.host" /></div>
@@ -86,8 +87,8 @@ async function sendTest() {
     <label class="fld" style="margin-top:0">Tên người gửi hiển thị</label>
     <MInput v-model="s.from_name" />
     <div style="display:flex;gap:10px;margin-top:16px">
-      <MButton variant="primary" @click="save">💾 Lưu</MButton>
-      <MButton variant="secondary" :loading="testing" @click="sendTest">📨 Gửi email kiểm tra</MButton>
+      <MButton variant="primary" @click="save"><MIcon name="device-floppy" /> Lưu</MButton>
+      <MButton variant="secondary" :loading="testing" @click="sendTest"><MIcon name="send" /> Gửi email kiểm tra</MButton>
     </div>
   </div>
 </template>

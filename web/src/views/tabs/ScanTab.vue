@@ -11,6 +11,7 @@ import MTag from '../../components/mds/MTag.vue';
 import MCheckbox from '../../components/mds/MCheckbox.vue';
 import MDialog from '../../components/mds/MDialog.vue';
 import AttendeeFields from '../../components/AttendeeFields.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -21,7 +22,7 @@ const myPos = computed(() => props.ev.my_position || null);
 // Vị trí quét: nhân viên checkin bị khoá cứng theo phân công; quản lý/admin tự chọn.
 const locStorageKey = 'scanLocation-' + props.ev.id;
 const location = ref(isCheckin.value ? (myPos.value?.booth_id ? String(myPos.value.booth_id) : '') : (localStorage.getItem(locStorageKey) || ''));
-const locOptions = computed(() => [{ value: '', label: '🚪 Cổng check-in' }, ...props.ev.booths.map(b => ({ value: String(b.id), label: '🧭 Booth: ' + b.name }))]);
+const locOptions = computed(() => [{ value: '', label: 'Cổng check-in' }, ...props.ev.booths.map(b => ({ value: String(b.id), label: 'Booth: ' + b.name }))]);
 const atBooth = computed(() => !!location.value);
 const boothId = computed(() => location.value ? Number(location.value) : null);
 function onLocChange() { localStorage.setItem(locStorageKey, location.value); result.value = null; }
@@ -35,16 +36,16 @@ const result = ref(null);   // response gần nhất của /scan
 let busy = false;
 
 const STATUS_UI = {
-  checked_in:       { cls: 'ok',   icon: '✅', title: 'CHECK-IN THÀNH CÔNG' },
-  booth_recorded:   { cls: 'ok',   icon: '🧭', title: 'ĐÃ GHI NHẬN BOOTH' },
-  valid:            { cls: 'ok',   icon: '🟢', title: 'KHÁCH HỢP LỆ' },
-  booth_already:    { cls: 'warn', icon: '🔁', title: 'ĐÃ GHI NHẬN TRƯỚC ĐÓ' },
-  already_checked:  { cls: 'warn', icon: 'ℹ️', title: 'KHÁCH ĐÃ CHECK-IN RỒI' },
-  expired:          { cls: 'warn', icon: '⚠️', title: 'MÃ ĐÃ HẾT HẠN' },
-  wrong_event:      { cls: 'warn', icon: '⚠️', title: 'SAI SỰ KIỆN' },
-  invalid:          { cls: 'bad',  icon: '❌', title: 'MÃ KHÔNG HỢP LỆ' },
-  badge_stopped:    { cls: 'bad',  icon: '❌', title: 'THẺ ĐÃ NGỪNG' },
-  badge_unassigned: { cls: 'bad',  icon: '❌', title: 'THẺ CHƯA GÁN' },
+  checked_in:       { cls: 'ok',   icon: 'circle-check', title: 'CHECK-IN THÀNH CÔNG' },
+  booth_recorded:   { cls: 'ok',   icon: 'map-pin', title: 'ĐÃ GHI NHẬN BOOTH' },
+  valid:            { cls: 'ok',   icon: 'check', title: 'KHÁCH HỢP LỆ' },
+  booth_already:    { cls: 'warn', icon: 'refresh', title: 'ĐÃ GHI NHẬN TRƯỚC ĐÓ' },
+  already_checked:  { cls: 'warn', icon: 'info-circle', title: 'KHÁCH ĐÃ CHECK-IN RỒI' },
+  expired:          { cls: 'warn', icon: 'alert-triangle', title: 'MÃ ĐÃ HẾT HẠN' },
+  wrong_event:      { cls: 'warn', icon: 'alert-triangle', title: 'SAI SỰ KIỆN' },
+  invalid:          { cls: 'bad',  icon: 'circle-x', title: 'MÃ KHÔNG HỢP LỆ' },
+  badge_stopped:    { cls: 'bad',  icon: 'circle-x', title: 'THẺ ĐÃ NGỪNG' },
+  badge_unassigned: { cls: 'bad',  icon: 'circle-x', title: 'THẺ CHƯA GÁN' },
 };
 const ui = computed(() => (result.value && STATUS_UI[result.value.status]) || null);
 const att = computed(() => result.value?.attendee || null);
@@ -94,16 +95,16 @@ async function saveWalkin() {
     <div class="card">
       <!-- Vị trí -->
       <div v-if="isCheckin" class="loc-fixed">
-        {{ myPos?.booth_id ? '🧭 Booth: ' + myPos.name : '🚪 Cổng check-in' }}
+        <MIcon :name="myPos?.booth_id ? 'map-pin' : 'door-exit'" /> {{ myPos?.booth_id ? 'Booth: ' + myPos.name : 'Cổng check-in' }}
       </div>
       <div v-else style="margin-bottom:14px">
         <label class="fld">Vị trí quét</label>
         <MSelect v-model="location" :options="locOptions" @update:modelValue="onLocChange" />
       </div>
 
-      <h3>📷 Camera quét mã</h3>
+      <h3><MIcon name="camera" /> Camera quét mã</h3>
       <div v-if="!failed" id="qr-reader" class="qr-reader"></div>
-      <div v-else class="qr-fail">📷 Không mở được camera (cần HTTPS hoặc localhost). Hãy nhập mã thủ công bên dưới.</div>
+      <div v-else class="qr-fail"><MIcon name="camera" /> Không mở được camera (cần HTTPS hoặc localhost). Hãy nhập mã thủ công bên dưới.</div>
 
       <MCheckbox v-if="!atBooth" v-model="autoConfirm" label="Tự động check-in ngay khi quét (tại cổng)" style="margin:12px 0" @change="onAutoChange" />
 
@@ -121,7 +122,7 @@ async function saveWalkin() {
     <!-- Kết quả -->
     <div class="card result" :class="ui ? ui.cls : 'idle'">
       <template v-if="ui">
-        <div class="r-head"><span class="r-icon">{{ ui.icon }}</span><span class="r-title">{{ ui.title }}</span></div>
+        <div class="r-head"><MIcon :name="ui.icon" class="r-icon" /><span class="r-title">{{ ui.title }}</span></div>
         <p class="r-msg">{{ result.message }}</p>
         <div v-if="att" class="r-info">
           <div><span>Họ tên</span><b>{{ (att.salutation ? att.salutation + ' ' : '') + att.name }}</b></div>
@@ -132,11 +133,11 @@ async function saveWalkin() {
           <div v-if="att.phone"><span>SĐT</span><b>{{ att.phone }}</b></div>
           <div v-if="att.email"><span>Email</span><b>{{ att.email }}</b></div>
         </div>
-        <MButton v-if="result.status === 'valid'" variant="primary" style="margin-top:14px;width:100%" @click="confirmCheckin">✅ XÁC NHẬN CHECK-IN</MButton>
-        <MButton v-if="att && !atBooth" variant="secondary" style="margin-top:10px;width:100%" @click="printQr(att, props.ev.id)">🖨 In thẻ QR cho khách</MButton>
+        <MButton v-if="result.status === 'valid'" variant="primary" style="margin-top:14px;width:100%" @click="confirmCheckin"><MIcon name="circle-check" /> XÁC NHẬN CHECK-IN</MButton>
+        <MButton v-if="att && !atBooth" variant="secondary" style="margin-top:10px;width:100%" @click="printQr(att, props.ev.id)"><MIcon name="printer" /> In thẻ QR cho khách</MButton>
       </template>
       <div v-else class="r-idle">
-        <div style="font-size:44px">{{ atBooth ? '🧭' : '📷' }}</div>
+        <div style="font-size:44px;display:flex;justify-content:center"><MIcon :name="atBooth ? 'map-pin' : 'camera'" :size="44" /></div>
         <p class="muted">{{ atBooth ? 'Quét QR của khách để ghi nhận ghé booth.' : 'Đưa mã QR vào khung camera để check-in.' }}</p>
       </div>
     </div>
@@ -160,7 +161,7 @@ h3 { font-size: 15px; font-weight: 700; margin: 0 0 10px; }
 .result.warn { border-color: #fdba74; background: #fff7ed; }
 .result.bad { border-color: #fca5a5; background: #fef2f2; }
 .r-head { display: flex; align-items: center; gap: 10px; }
-.r-icon { font-size: 30px; }
+.r-icon { width: 30px; height: 30px; flex-shrink: 0; }
 .r-title { font-size: 18px; font-weight: 800; }
 .result.ok .r-title { color: #15803d; }
 .result.warn .r-title { color: #c2410c; }

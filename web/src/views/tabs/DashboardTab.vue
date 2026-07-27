@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { api } from '../../api';
 import MSelect from '../../components/mds/MSelect.vue';
 import MButton from '../../components/mds/MButton.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const s = ref(null);
@@ -83,7 +84,7 @@ const chipGroups = computed(() => [
   <div v-if="s">
     <!-- Hero -->
     <div class="hero">
-      <div class="scope">{{ anyFilter ? '🔎 Đang lọc: ' + summary : '📊 Toàn sự kiện' }}</div>
+      <div class="scope"><MIcon :name="anyFilter ? 'filter' : 'chart-bar'" /> {{ anyFilter ? 'Đang lọc: ' + summary : 'Toàn sự kiện' }}</div>
       <div class="rate">{{ rate }}%</div>
       <div class="headline">Đã đến <b>{{ att }}</b> / {{ reg }} khách</div>
       <div class="bar"><div class="fill" :style="{ width: rate + '%' }"></div></div>
@@ -96,8 +97,8 @@ const chipGroups = computed(() => [
     <!-- Bộ lọc -->
     <div class="card">
       <div class="acc-head" @click="accOpen = !accOpen">
-        <b>🎛 Bộ lọc {{ fcount ? '(' + fcount + ')' : '' }}</b>
-        <span>{{ accOpen ? '▲' : '▼' }}</span>
+        <b><MIcon name="filter" /> Bộ lọc {{ fcount ? '(' + fcount + ')' : '' }}</b>
+        <MIcon :name="accOpen ? 'chevron-up' : 'chevron-down'" />
       </div>
       <div v-show="accOpen" style="margin-top:12px">
         <div v-for="g in chipGroups" :key="g.dim" class="chip-group">
@@ -106,14 +107,14 @@ const chipGroups = computed(() => [
             <button v-for="it in g.items" :key="it.v" class="chip" :class="{ on: isOn(g.dim, it.v) }" @click="toggle(g.dim, it.v)">{{ it.label }}</button>
           </div>
         </div>
-        <MButton v-if="anyFilter" variant="link" size="md" @click="clearAll">✕ Xoá tất cả lọc</MButton>
+        <MButton v-if="anyFilter" variant="link" size="md" @click="clearAll"><MIcon name="x" /> Xoá tất cả lọc</MButton>
       </div>
     </div>
 
     <!-- Tỷ trọng -->
     <div class="card">
       <div class="page-head" style="margin-bottom:12px">
-        <h3>📋 Tỷ trọng theo</h3>
+        <h3><MIcon name="list" /> Tỷ trọng theo</h3>
         <div style="width:220px"><MSelect v-model="dim" :options="dimOptions" /></div>
       </div>
       <div v-if="!breakdown.length" class="muted">Không có dữ liệu phù hợp bộ lọc.</div>

@@ -1,189 +1,131 @@
 <script setup>
-// MHeaderBar — Thanh điều hướng trên cùng (Header bar) chuẩn MDS 2.0
-// Nền brand-600 (theme của app), chữ/icon trắng.
-// Trái: logo + tên app · Giữa: ô tìm kiếm · Phải: slot actions + chuông + thiết lập + avatar.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+// MHeaderBar — Header Platform MISA: light hoặc brand theo reference sản phẩm.
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import MIcon from './MIcon.vue'
+import MHeaderIconAva from './MHeaderIconAva.vue'
+import MHeaderIconChat from './MHeaderIconChat.vue'
 
 const props = defineProps({
-  /** Tên app hiển thị cạnh logo */
+  variant: { type: String, default: 'light', validator: (v) => ['light', 'brand'].includes(v) },
   appName: { type: String, default: '' },
-  /** Placeholder ô tìm kiếm */
-  searchPlaceholder: { type: String, default: 'Tìm kiếm (Ctrl+K)' },
-  /** Số thông báo — badge đỏ trên chuông, hiện '99+' khi >99 */
+  companyName: { type: String, default: '' },
+  searchPlaceholder: { type: String, default: 'Tìm kiếm' },
   notificationCount: { type: Number, default: 0 },
-  /** Người dùng: { name, avatarUrl? } */
+  chatCount: { type: Number, default: 0 },
+  assistant: { type: Object, default: null },
   user: { type: Object, default: null },
+  showSettings: { type: Boolean, default: true },
+  showAssistant: { type: Boolean, default: true },
+  showChat: { type: Boolean, default: true },
+  showNotifications: { type: Boolean, default: true },
+  showHelp: { type: Boolean, default: true },
+  showMore: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['search', 'notifications', 'settings', 'user-click', 'logo-click'])
-
+const emit = defineEmits(['search', 'notifications', 'settings', 'assistant', 'chat', 'help', 'more', 'user-click', 'logo-click', 'app-switcher', 'company-click'])
 const searchInput = ref(null)
 const searchText = ref('')
 
-// Nội dung badge chuông: vượt 99 thì hiện '99+'
-const badgeText = computed(() =>
-  props.notificationCount > 99 ? '99+' : String(props.notificationCount)
-)
-
-// Chữ cái đầu tên app cho logo mặc định
+const isBrand = computed(() => props.variant === 'brand')
+// 'mds-header--brand' là class hook để theme Gradient tô gradient lên header
+// (xem assets/tokens/themes/gradient.css) — không xóa dù trông "thừa" so với Tailwind.
+const headerClass = computed(() => isBrand.value
+  ? 'mds-header--brand bg-[var(--mds-brand-600)] text-white'
+  : 'border-b border-[var(--mds-border)] bg-[var(--mds-bg)] text-[var(--mds-text)]')
+const buttonClass = computed(() => isBrand.value
+  ? 'text-white hover:bg-white/15 focus-visible:outline-white'
+  : 'text-[var(--mds-icon-neutral)] hover:bg-[var(--mds-bg-hover-soft)] focus-visible:outline-[var(--mds-brand-600)]')
+// AMIS Chat: icon "message" đúng bản trong thư viện (assets/icons/message.svg qua MIcon),
+// giữ màu nhận diện #1570EF trên header sáng (KHÔNG chuyển neutral như icon thường),
+// trắng trên header brand giống các icon khác. Xem header-bar.md mục 3c.
+const chatButtonClass = computed(() => isBrand.value
+  ? 'text-white hover:bg-white/15 focus-visible:outline-white'
+  : 'text-[#1570EF] hover:bg-[var(--mds-bg-hover-soft)] focus-visible:outline-[var(--mds-brand-600)]')
+const searchClass = computed(() => isBrand.value
+  ? 'bg-white/15 text-white placeholder:text-white/70 focus:bg-white focus:text-[var(--mds-text)] focus:placeholder:text-[var(--mds-text-placeholder)]'
+  : 'bg-[var(--mds-bg-disabled)] text-[var(--mds-text)] placeholder:text-[var(--mds-text-muted)] focus:bg-white focus:ring-1 focus:ring-[var(--mds-brand-600)]')
+const searchIconClass = computed(() => isBrand.value
+  ? 'text-white/70 peer-focus:text-[var(--mds-icon-neutral)]'
+  : 'text-[var(--mds-icon-neutral)]')
+const badgeText = computed(() => props.notificationCount > 99 ? '99+' : String(props.notificationCount))
+const chatBadgeText = computed(() => props.chatCount > 99 ? '99+' : String(props.chatCount))
 const appInitial = computed(() => (props.appName || '').trim().charAt(0).toUpperCase())
+const userInitials = computed(() => initials(props.user?.name))
 
-// 2 chữ cái đầu tên người dùng (VD: "Nguyễn Văn Tuấn" → "NV"); 1 từ thì lấy 2 ký tự đầu
-const userInitials = computed(() => {
-  const name = (props.user && props.user.name ? props.user.name : '').trim()
-  if (!name) return ''
-  const words = name.split(/\s+/)
-  return (words.length >= 2 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase()
-})
-
-// Phím tắt Ctrl+K (Windows) / Cmd+K (macOS) → focus ô tìm kiếm
-function onGlobalKeydown(e) {
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-    e.preventDefault()
-    if (searchInput.value) searchInput.value.focus()
+function initials(name) {
+  const words = (name || '').trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return ''
+  return (words.length >= 2 ? words[0][0] + words[1][0] : words[0].slice(0, 2)).toUpperCase()
+}
+function onGlobalKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    searchInput.value?.focus()
   }
 }
+function onSearchFocus(event) { event.target.select() }
+function onSearchEnter() { emit('search', searchText.value) }
+
 onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
-
-// Enter trong ô tìm kiếm → emit từ khóa
-function onSearchEnter() {
-  emit('search', searchText.value)
-}
-
-// Hành vi MDS: focus input tự SelectAll nội dung
-function onSearchFocus(e) {
-  e.target.select()
-}
 </script>
 
 <template>
-  <header
-    class="flex h-12 w-full items-center gap-3 bg-[var(--mds-brand-600)] px-4 text-[13px] leading-[18px] text-white"
-  >
-    <!-- ── Trái: logo + tên app (click → về màn hình chính) ── -->
-    <button
-      type="button"
-      class="flex shrink-0 items-center gap-2 rounded-lg px-1 hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-      :title="appName"
-      @click="emit('logo-click')"
-    >
-      <slot name="logo">
-        <!-- Logo mặc định: ô vuông 32px chứa chữ cái đầu tên app -->
-        <span
-          class="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 text-[16px] font-semibold"
-          >{{ appInitial }}</span
-        >
-      </slot>
-      <span class="text-[16px] font-semibold leading-[22px]">{{ appName }}</span>
+  <header class="flex h-12 w-full items-center gap-2 px-3 text-[13px] leading-[18px]" :class="headerClass">
+    <button type="button" :class="buttonClass" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" title="Chuyển ứng dụng" aria-label="Chuyển ứng dụng" @click="emit('app-switcher')">
+      <!-- Biểu tượng Platform 9 chấm là glyph thương hiệu riêng, không thuộc thư viện icon Tabler/MIcon. -->
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <circle v-for="[cx, cy] in [[5,5],[10,5],[15,5],[5,10],[10,10],[15,10],[5,15],[10,15],[15,15]]" :key="`${cx}-${cy}`" :cx="cx" :cy="cy" r="1.4" />
+      </svg>
     </button>
 
-    <!-- ── Giữa: ô tìm kiếm ── -->
-    <div class="flex min-w-0 flex-1 justify-center">
-      <div class="relative w-full max-w-[360px]">
-        <input
-          ref="searchInput"
-          v-model="searchText"
-          type="text"
-          :placeholder="searchPlaceholder"
-          class="peer h-8 w-full rounded-lg bg-white/15 pl-9 pr-3 text-white outline-none transition-colors placeholder:text-white/70 focus:bg-white focus:text-[var(--mds-text)] focus:placeholder:text-[var(--mds-text-placeholder)]"
-          @keydown.enter="onSearchEnter"
-          @focus="onSearchFocus"
-        />
-        <!-- Icon tìm kiếm (assets/icons/search.svg) — đổi màu neutral khi input focus nền trắng -->
-        <svg
-          class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/70 peer-focus:text-[var(--mds-icon-neutral)]"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
-          <path d="M21 21l-6 -6" />
-        </svg>
+    <button type="button" :class="buttonClass" class="flex shrink-0 items-center gap-2 rounded-lg px-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" :title="appName" @click="emit('logo-click')">
+      <slot name="logo">
+        <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--mds-brand-600)] text-[16px] font-semibold text-white">{{ appInitial }}</span>
+      </slot>
+      <span class="hidden text-[16px] font-semibold leading-[22px] sm:block">{{ appName }}</span>
+    </button>
+
+    <button v-if="companyName" type="button" :class="isBrand ? 'text-white/90 hover:bg-white/15' : 'text-[var(--mds-text)] hover:bg-[var(--mds-bg-hover-soft)]'" class="hidden max-w-[240px] items-center gap-1 truncate rounded-lg px-2 py-1.5 font-medium lg:flex" :title="companyName" @click="emit('company-click')">
+      <span class="truncate">{{ companyName }}</span>
+      <MIcon name="chevron-down" :size="16" />
+    </button>
+
+    <div class="flex min-w-0 flex-1 justify-center px-2">
+      <div class="relative w-full max-w-[500px]">
+        <input ref="searchInput" v-model="searchText" type="search" :placeholder="searchPlaceholder" class="peer h-8 w-full rounded-lg pl-9 pr-3 outline-none transition-colors" :class="searchClass" @focus="onSearchFocus" @keydown.enter="onSearchEnter" />
+        <MIcon name="search" :size="16" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" :class="searchIconClass" />
       </div>
     </div>
 
-    <!-- ── Phải: actions + chuông + thiết lập + avatar ── -->
     <div class="flex shrink-0 items-center gap-1">
-      <!-- Slot icon button bổ sung, đặt trước chuông -->
       <slot name="actions" />
-
-      <!-- Chuông thông báo + badge đỏ -->
-      <button
-        type="button"
-        class="relative flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-        title="Thông báo"
-        @click="emit('notifications')"
-      >
-        <!-- assets/icons/bell.svg -->
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6" />
-          <path d="M9 17v1a3 3 0 0 0 6 0v-1" />
-        </svg>
-        <span
-          v-if="notificationCount > 0"
-          class="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--mds-danger)] px-1 text-[10px] font-medium leading-none text-white"
-          >{{ badgeText }}</span
-        >
+      <button v-if="showSettings" type="button" :class="buttonClass" class="grid h-8 w-8 place-items-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" title="Thiết lập" @click="emit('settings')"><MIcon name="settings" :size="20" /></button>
+      <button v-if="showAssistant" type="button" class="grid h-8 w-8 place-items-center overflow-hidden rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mds-brand-600)]" :title="assistant?.name || 'MISA AVA'" @click="emit('assistant')">
+        <!-- Mặc định: icon AVA full-color cố định (giữ nguyên màu ở mọi mode) — app có
+        thể truyền avatarUrl/slot riêng nếu có mascot chuyên biệt của phân hệ -->
+        <slot name="assistant">
+          <img v-if="assistant?.avatarUrl" :src="assistant.avatarUrl" :alt="assistant.name || 'MISA AVA'" class="h-full w-full object-cover" />
+          <MHeaderIconAva v-else :size="24" />
+        </slot>
       </button>
-
-      <!-- Thiết lập -->
-      <button
-        type="button"
-        class="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-        title="Thiết lập"
-        @click="emit('settings')"
-      >
-        <!-- assets/icons/settings.svg -->
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
-          <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-        </svg>
+      <!-- AMIS Chat: icon bong bóng chat bo tròn, fill đặc, 3 chấm khoét lỗ (evenodd) —
+           đúng asset gốc từ bộ demo chuẩn (MHeaderIconChat.vue), KHÔNG phải icon "message"
+           outline của MIcon. Giữ màu #1570EF trên header sáng, trắng trên brand. -->
+      <button v-if="showChat" type="button" :class="chatButtonClass" class="relative grid h-8 w-8 place-items-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" title="AMIS Chat" @click="emit('chat')">
+        <MHeaderIconChat :size="20" />
+        <span v-if="chatCount > 0" class="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--mds-danger)] px-1 text-[10px] font-medium leading-none text-white">{{ chatBadgeText }}</span>
       </button>
-
-      <!-- Avatar người dùng: có ảnh thì hiện ảnh, không thì 2 chữ cái đầu tên -->
-      <button
-        v-if="user"
-        type="button"
-        class="ml-1 h-8 w-8 shrink-0 overflow-hidden rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-        :title="user.name"
-        @click="emit('user-click')"
-      >
-        <img
-          v-if="user.avatarUrl"
-          :src="user.avatarUrl"
-          :alt="user.name"
-          class="h-full w-full object-cover"
-        />
-        <span
-          v-else
-          class="flex h-full w-full items-center justify-center bg-white/20 text-[12px] font-semibold"
-          >{{ userInitials }}</span
-        >
-      </button>
+      <button v-if="showNotifications" type="button" :class="buttonClass" class="relative grid h-8 w-8 place-items-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" title="Thông báo" @click="emit('notifications')"><MIcon name="bell" :size="20" /><span v-if="notificationCount > 0" class="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--mds-danger)] px-1 text-[10px] font-medium leading-none text-white">{{ badgeText }}</span></button>
+      <button v-if="showHelp" type="button" :class="buttonClass" class="hidden h-8 w-8 place-items-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 md:grid" title="Hỗ trợ" @click="emit('help')"><MIcon name="help" :size="20" /></button>
+      <button v-if="showMore" type="button" :class="isBrand ? 'border-white/40 text-white hover:bg-white/15 focus-visible:outline-white' : 'border-[var(--mds-border)] text-[var(--mds-icon-neutral)] hover:bg-[var(--mds-bg-hover-soft)] focus-visible:outline-[var(--mds-brand-600)]'" class="hidden h-8 w-8 place-items-center rounded-full border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 md:grid" title="Thêm" @click="emit('more')"><MIcon name="dots" :size="16" /></button>
+      <!-- Slot "user" cho phép app thay hẳn nút avatar mặc định bằng identity phức tạp hơn
+           (vd dropdown menu kèm tên/vai trò) mà vẫn giữ đúng vị trí NGOÀI CÙNG BÊN PHẢI theo
+           quy chuẩn header-bar.md — không được đẩy identity/notification tự chế vào slot
+           "actions" (slot đó nằm TRƯỚC Thiết lập, sẽ làm sai thứ tự cụm tiện ích). -->
+      <slot name="user">
+        <button v-if="user" type="button" class="ml-1 h-8 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--mds-brand-100)] text-[12px] font-semibold text-[var(--mds-brand-700)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mds-brand-600)]" :title="user.name" @click="emit('user-click')"><img v-if="user.avatarUrl" :src="user.avatarUrl" :alt="user.name" class="h-full w-full object-cover" /><span v-else class="flex h-full w-full items-center justify-center">{{ userInitials }}</span></button>
+      </slot>
     </div>
   </header>
 </template>

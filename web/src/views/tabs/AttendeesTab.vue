@@ -10,6 +10,7 @@ import MTag from '../../components/mds/MTag.vue';
 import MDialog from '../../components/mds/MDialog.vue';
 import MCheckbox from '../../components/mds/MCheckbox.vue';
 import AttendeeFields from '../../components/AttendeeFields.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -34,7 +35,6 @@ const filtered = computed(() => rows.value.filter(r =>
   (!fStatus.value || (fStatus.value === 'in' ? r.checked_in_at : !r.checked_in_at))));
 
 const impColor = (i) => ({ VIP: 'warning', VVIP: 'danger', Speaker: 'info', 'Ban lãnh đạo': 'danger', 'Ban Tổ chức': 'info' }[i] || 'neutral');
-function toggleSel(id) { const i = selected.value.indexOf(id); i >= 0 ? selected.value.splice(i, 1) : selected.value.push(id); }
 
 /* form thêm/sửa */
 const dlgOpen = ref(false); const editing = ref(null);
@@ -93,14 +93,14 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
 <template>
   <div v-if="canManage" class="toolbar">
     <MButton variant="primary" @click="openAdd">+ Thêm người</MButton>
-    <a class="lnk-btn" href="/api/attendees/template" download>⬇ Excel mẫu</a>
-    <MButton variant="secondary" @click="fileInput.click()">⬆ Tải lên Excel</MButton>
+    <a class="lnk-btn" href="/api/attendees/template" download><MIcon name="download" /> Excel mẫu</a>
+    <MButton variant="secondary" @click="fileInput.click()"><MIcon name="upload" /> Tải lên Excel</MButton>
     <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
-    <MButton variant="secondary" :disabled="!unsent" @click="sendAll">✉️ Gửi QR cho người chưa nhận ({{ unsent }})</MButton>
+    <MButton variant="secondary" :disabled="!unsent" @click="sendAll"><MIcon name="mail" /> Gửi QR cho người chưa nhận ({{ unsent }})</MButton>
   </div>
 
   <div class="toolbar">
-    <div style="flex:1;min-width:220px"><MInput v-model="q" placeholder="🔍 Tìm theo tên, công ty, SĐT, email..." clearable /></div>
+    <div style="flex:1;min-width:220px"><MInput v-model="q" placeholder="Tìm theo tên, công ty, SĐT, email..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
     <div class="toolbar-select"><MSelect v-model="fImp" :options="opt(auth.options.importances, 'Tất cả mức độ')" /></div>
     <div class="toolbar-select"><MSelect v-model="fPos" :options="opt(auth.options.positions, 'Tất cả chức vụ')" /></div>
     <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'in', label: 'Đã check-in' }, { value: 'out', label: 'Chưa check-in' }]" /></div>
@@ -108,7 +108,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
 
   <div v-if="canManage && selected.length" class="bulk">
     <span>Đã chọn <b>{{ selected.length }}</b> người</span>
-    <MButton variant="secondary" size="md" @click="sendSelected">✉️ Gửi email cho người đã chọn</MButton>
+    <MButton variant="secondary" size="md" @click="sendSelected"><MIcon name="mail" /> Gửi email cho người đã chọn</MButton>
     <MButton variant="link" size="md" @click="selected = []">Bỏ chọn</MButton>
   </div>
 
@@ -125,7 +125,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
       </tr></thead>
       <tbody>
         <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
-          <td v-if="canManage"><input type="checkbox" :checked="selected.includes(r.id)" :disabled="!(r.email && r.eligible)" @change="toggleSel(r.id)" /></td>
+          <td v-if="canManage"><MCheckbox v-model="selected" :value="r.id" :disabled="!(r.email && r.eligible)" /></td>
           <td>
             <span class="name-tags">
               <b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b>
@@ -135,7 +135,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
           </td>
           <td><MTag :color="impColor(r.importance)" size="sm">{{ r.importance || 'Bình thường' }}</MTag></td>
           <td>{{ r.email }}</td><td>{{ r.phone }}</td><td>{{ r.company }}</td>
-          <td><MTag v-if="r.checked_in_at" color="success" size="sm">✓ {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
+          <td><MTag v-if="r.checked_in_at" color="success" size="sm"><MIcon name="check" /> {{ fmtDate(r.checked_in_at, true) }}</MTag><MTag v-else color="neutral" size="sm">Chưa</MTag></td>
           <td style="white-space:nowrap">
             <span class="cell-actions">
               <MTag :color="r.confirm_email_sent_at ? 'success' : 'neutral'" size="sm">{{ r.confirm_email_sent_at ? 'Đã gửi' : 'Chưa' }}</MTag>
@@ -146,7 +146,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
             <span v-if="canManage" class="cell-actions" style="justify-content:flex-end">
               <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
               <MButton variant="secondary" size="md" @click="showQr(r)">QR</MButton>
-              <MButton variant="danger" size="md" @click="del(r)">✕</MButton>
+              <MButton variant="danger" size="md" @click="del(r)"><MIcon name="trash" /></MButton>
             </span>
           </td>
         </tr>
@@ -163,7 +163,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
     <div v-if="qrRow" style="text-align:center">
       <img :src="`/api/attendees/${qrRow.id}/qr.png`" style="width:240px" />
       <div style="font-family:monospace;font-size:12px;color:#6b7280;margin-top:6px">{{ qrRow.qr_token }}</div>
-      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow, props.ev.id)">🖨 In tem QR (50×50mm)</MButton>
+      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow, props.ev.id)"><MIcon name="printer" /> In tem QR (50×50mm)</MButton>
     </div>
   </MDialog>
 </template>

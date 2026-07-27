@@ -10,6 +10,7 @@ import MTag from '../../components/mds/MTag.vue';
 import MDialog from '../../components/mds/MDialog.vue';
 import MCheckbox from '../../components/mds/MCheckbox.vue';
 import AttendeeFields from '../../components/AttendeeFields.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -92,35 +93,35 @@ async function save() {
     </div>
 
     <div v-if="d.booths.length" class="card">
-      <h3>🧭 Lượt ghé booth</h3>
+      <h3><MIcon name="map-pin" /> Lượt ghé booth</h3>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
         <MTag v-for="b in d.booths" :key="b.id" color="info">{{ b.name }}: {{ b.visit_count }} lượt</MTag>
       </div>
     </div>
 
     <div class="toolbar">
-      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="🔍 Tìm theo tên, SĐT, công ty, email..." clearable /></div>
+      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="Tìm theo tên, SĐT, công ty, email..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
       <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'in', label: 'Đã check-in' }, { value: 'out', label: 'Chưa check-in' }]" /></div>
       <div class="toolbar-select"><MSelect v-model="fImp" :options="opt(d.importances, 'Tất cả mức độ')" /></div>
       <div class="toolbar-select"><MSelect v-model="fPos" :options="opt(d.positions, 'Tất cả chức vụ')" /></div>
       <div class="toolbar-select"><MSelect v-model="fSize" :options="opt(d.company_sizes, 'Tất cả quy mô')" /></div>
-      <MButton variant="secondary" @click="colsDlgOpen = true">☑ Chọn cột</MButton>
-      <a class="lnk-btn" :href="exportUrl" download>⬇ Xuất Excel ({{ selectedCols.length }} cột)</a>
+      <MButton variant="secondary" @click="colsDlgOpen = true"><MIcon name="list" /> Chọn cột</MButton>
+      <a class="lnk-btn" :href="exportUrl" download><MIcon name="download" /> Xuất Excel ({{ selectedCols.length }} cột)</a>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.rows.length }}</b> người</div>
 
     <div class="toolbar">
-      <span class="muted" style="font-size:13px">🎁 Lucky draw — khách ghé tối thiểu</span>
+      <span class="muted" style="font-size:13px"><MIcon name="gift" /> Lucky draw — khách ghé tối thiểu</span>
       <div style="width:110px"><MInput v-model="minBooths" type="number" placeholder="VD 8" /></div>
       <span class="muted" style="font-size:13px">booth</span>
-      <a class="lnk-btn" :class="{ dis: !(Number(minBooths) > 0) }" :href="luckyExportUrl" download>⬇ Xuất DS đủ ĐK quay số</a>
+      <a class="lnk-btn" :class="{ dis: !(Number(minBooths) > 0) }" :href="luckyExportUrl" download><MIcon name="download" /> Xuất DS đủ ĐK quay số</a>
     </div>
 
     <div class="card" style="padding:0;overflow-x:auto">
       <table class="tbl">
         <thead><tr>
           <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian</th>
-          <th>Booth đã ghé</th><th>📝 Ghi chú giám sát</th><th>⭐ Tiềm năng</th><th>NV check-in</th><th v-if="canManage"></th>
+          <th>Booth đã ghé</th><th><MIcon name="pencil" /> Ghi chú giám sát</th><th><MIcon name="star" /> Tiềm năng</th><th>NV check-in</th><th v-if="canManage"></th>
         </tr></thead>
         <tbody>
           <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
@@ -150,7 +151,7 @@ async function save() {
               </template>
             </td>
             <td>
-              <MTag v-if="(r.potential_notes || []).some(n => n.is_potential)" color="warning" size="sm">⭐ Tiềm năng</MTag>
+              <MTag v-if="(r.potential_notes || []).some(n => n.is_potential)" color="warning" size="sm"><MIcon name="star" /> Tiềm năng</MTag>
               <span v-else class="muted">—</span>
               <template v-for="(n, i) in (r.potential_notes || []).filter(x => x.note)" :key="i">
                 <div style="font-size:12px;margin-top:3px"><b>{{ n.name }}:</b> {{ n.note }}</div>
@@ -160,7 +161,7 @@ async function save() {
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
               <span class="cell-actions" style="justify-content:flex-end">
                 <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
-                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r, props.ev.id)">🖨</MButton>
+                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r, props.ev.id)"><MIcon name="printer" /></MButton>
               </span>
             </td>
           </tr>
@@ -181,7 +182,7 @@ async function save() {
       <div class="cols-list">
         <MCheckbox v-for="c in allColumns" :key="c.key" v-model="selectedCols" :value="c.key" :label="c.label" />
       </div>
-      <MButton variant="primary" style="margin-top:16px" @click="saveColumns">💾 Lưu lựa chọn</MButton>
+      <MButton variant="primary" style="margin-top:16px" @click="saveColumns"><MIcon name="device-floppy" /> Lưu lựa chọn</MButton>
     </MDialog>
   </div>
 </template>

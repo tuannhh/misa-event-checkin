@@ -1,9 +1,23 @@
-/* Tokens MDS (biến --mds-*) phải nạp trước Tailwind */
+/* Tokens MDS (biến --mds-*) phải nạp trước Tailwind. Nạp đủ 11 theme màu (chọn qua
+   [data-mds-theme] ở MSettingsDialog) + 3 mật độ hiển thị (qua [data-mds-space]) để
+   người dùng đổi được trong dialog Thiết lập, không chỉ có theme blue cứng. */
 @import './tokens/base-colors.css';
-@import './tokens/blue.css';
+@import './tokens/themes/blue.css';
+@import './tokens/themes/indigo.css';
+@import './tokens/themes/cyan.css';
+@import './tokens/themes/teal.css';
+@import './tokens/themes/green.css';
+@import './tokens/themes/orange.css';
+@import './tokens/themes/red.css';
+@import './tokens/themes/pink.css';
+@import './tokens/themes/purple.css';
+@import './tokens/themes/blue-gray.css';
+@import './tokens/themes/gradient.css';
 @import './tokens/font.css';
 @import './tokens/number.css';
 @import './tokens/space-standard.css';
+@import './tokens/space-compact.css';
+@import './tokens/space-comfortable.css';
 
 @tailwind base;
 @tailwind components;

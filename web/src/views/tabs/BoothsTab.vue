@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -36,9 +37,9 @@ async function delBooth(b) {
 
 <template>
   <div v-if="data" class="card" style="max-width:700px">
-    <h3>🧭 Hành trình booth của sự kiện</h3>
+    <h3><MIcon name="map-pin" /> Hành trình booth của sự kiện</h3>
     <p class="muted" style="margin:6px 0 14px">Tạo danh sách booth/gian hàng. Mỗi nhân viên được gán 1 vị trí ở tab <b>Nhân viên</b>. Chỉ nhân viên được gán đúng booth quét mới ghi nhận lượt ghé.</p>
-    <div class="gate">🚪 <b>Cổng check-in</b> — Nhân viên:
+    <div class="gate"><MIcon name="door-exit" /> <b>Cổng check-in</b> — Nhân viên:
       <span v-if="staffByBooth[0]">{{ staffByBooth[0].join(', ') }}</span>
       <span v-else class="muted">chưa gán ai</span>
     </div>
@@ -47,9 +48,9 @@ async function delBooth(b) {
         <span class="num">{{ i + 1 }}</span>
         <div style="flex:1">
           <b>{{ b.name }}</b><br>
-          <span class="muted">👤 {{ (staffByBooth[b.id] || []).length ? staffByBooth[b.id].join(', ') : 'chưa gán ai' }}</span>
+          <span class="muted"><MIcon name="user" /> {{ (staffByBooth[b.id] || []).length ? staffByBooth[b.id].join(', ') : 'chưa gán ai' }}</span>
         </div>
-        <MButton v-if="canManage" variant="danger" size="md" @click="delBooth(b)">✕</MButton>
+        <MButton v-if="canManage" variant="danger" size="md" @click="delBooth(b)"><MIcon name="trash" /></MButton>
       </div>
     </div>
     <p v-else class="muted">Chưa có booth nào.</p>

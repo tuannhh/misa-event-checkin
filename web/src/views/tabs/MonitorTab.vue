@@ -6,6 +6,7 @@ import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
 import MTextarea from '../../components/mds/MTextarea.vue';
 import MCheckbox from '../../components/mds/MCheckbox.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -73,15 +74,15 @@ function ghostReset() { ghost.value = null; ghostCode.value = ''; }
 <template>
   <div v-if="err" class="card muted">{{ err }}</div>
   <div v-else-if="data">
-    <div class="info">🧭 <b>Booth phụ trách: {{ data.booth.name }}</b> — Ghi chú nhu cầu/đặc điểm của khách đã ghé booth. Khách xuất hiện sau khi được quét QR tại booth này.</div>
+    <div class="info"><MIcon name="map-pin" /> <b>Booth phụ trách: {{ data.booth.name }}</b> — Ghi chú nhu cầu/đặc điểm của khách đã ghé booth. Khách xuất hiện sau khi được quét QR tại booth này.</div>
 
     <div v-if="ev.badge_count" class="card ghost-card">
-      <h3>🕵️ Tra cứu bóng ma (theo mã thẻ)</h3>
+      <h3><MIcon name="eye" /> Tra cứu bóng ma (theo mã thẻ)</h3>
       <p class="muted" style="margin:2px 0 12px">Liếc thấy mã số in trên thẻ khách (VD 0005) → gõ vào đây để tra tên, ghi chú nhanh nhu cầu và đánh dấu khách hàng tiềm năng. Không cần khách ghé đúng booth này, và không tính vào số booth đã ghé (lucky draw).</p>
       <div style="display:flex;gap:8px">
         <div style="flex:1;max-width:220px"><MInput v-model="ghostCode" placeholder="Mã thẻ, VD 0005" @keyup.enter="ghostLookup" /></div>
-        <MButton variant="primary" :disabled="ghostBusy" @click="ghostLookup">🔍 Tra cứu</MButton>
-        <MButton v-if="ghost" variant="secondary" @click="ghostReset">↺ Tra mã khác</MButton>
+        <MButton variant="primary" :disabled="ghostBusy" @click="ghostLookup"><MIcon name="search" /> Tra cứu</MButton>
+        <MButton v-if="ghost" variant="secondary" @click="ghostReset"><MIcon name="refresh" /> Tra mã khác</MButton>
       </div>
 
       <div v-if="ghost" class="ghost-result">
@@ -92,17 +93,17 @@ function ghostReset() { ghost.value = null; ghostCode.value = ''; }
           </div>
         </div>
         <MTextarea v-model="ghost.note" :rows="2" placeholder="Ghi chú nhu cầu, sản phẩm quan tâm, hẹn liên hệ lại..." />
-        <MCheckbox v-model="ghost.is_potential" label="⭐ Khách hàng tiềm năng" style="margin-top:8px" />
+        <MCheckbox v-model="ghost.is_potential" label="Khách hàng tiềm năng" style="margin-top:8px" />
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-          <MButton variant="primary" size="md" :disabled="ghostBusy" @click="ghostSave">💾 Lưu</MButton>
-          <span v-if="ghostSaved" style="color:#15803d">✓ Đã lưu</span>
+          <MButton variant="primary" size="md" :disabled="ghostBusy" @click="ghostSave"><MIcon name="device-floppy" /> Lưu</MButton>
+          <span v-if="ghostSaved" style="color:#15803d"><MIcon name="check" /> Đã lưu</span>
         </div>
       </div>
     </div>
 
     <div class="toolbar">
-      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="🔍 Tìm theo tên, công ty, chức vụ..." clearable /></div>
-      <MButton variant="secondary" @click="load">🔄 Tải lại</MButton>
+      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="Tìm theo tên, công ty, chức vụ..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
+      <MButton variant="secondary" @click="load"><MIcon name="refresh" /> Tải lại</MButton>
     </div>
     <div class="muted" style="margin-bottom:10px">Có <b>{{ filtered.length }}</b> / {{ data.rows.length }} khách đã ghé booth</div>
 
@@ -114,12 +115,12 @@ function ghostReset() { ghost.value = null; ghostCode.value = ''; }
           <b>{{ (r.salutation ? r.salutation + ' ' : '') + r.name }}</b>
           <div class="muted">{{ [r.position, r.company].filter(Boolean).join(' · ') }}</div>
         </div>
-        <span class="muted" style="font-size:12px">🕒 {{ fmtDate(r.visited_at, true) }}</span>
+        <span class="muted" style="font-size:12px"><MIcon name="clock" /> {{ fmtDate(r.visited_at, true) }}</span>
       </div>
       <MTextarea v-model="notes[r.id]" :rows="2" placeholder="Ghi chú nhu cầu, sản phẩm quan tâm, hẹn liên hệ lại..." />
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <MButton variant="primary" size="md" :disabled="saving[r.id] === 'saving'" @click="saveNote(r)">💾 Lưu ghi chú</MButton>
-        <span v-if="saving[r.id] === 'ok'" style="color:#15803d">✓ Đã lưu</span>
+        <MButton variant="primary" size="md" :disabled="saving[r.id] === 'saving'" @click="saveNote(r)"><MIcon name="device-floppy" /> Lưu ghi chú</MButton>
+        <span v-if="saving[r.id] === 'ok'" style="color:#15803d"><MIcon name="check" /> Đã lưu</span>
         <span v-else-if="saving[r.id] && saving[r.id] !== 'saving'" style="color:#dc2626">{{ saving[r.id] }}</span>
       </div>
     </div>

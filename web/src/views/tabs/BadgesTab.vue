@@ -6,6 +6,7 @@ import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
 import MSelect from '../../components/mds/MSelect.vue';
 import MTag from '../../components/mds/MTag.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -40,7 +41,7 @@ async function delStation(s) {
   catch (e) { toast.error(e.message); }
 }
 
-// Trạm in đang dùng để in tem QR khách (nút 🖨 ở các tab Quét QR/Lễ tân/Báo cáo) - nhớ theo
+// Trạm in đang dùng để in tem QR khách (nút In tem ở các tab Quét QR/Lễ tân/Báo cáo) - nhớ theo
 // từng sự kiện trên máy này (giống cách nhớ vị trí quét), xem lib/print.js.
 const activeStationId = ref(localStorage.getItem('printStation-' + props.ev.id) || '');
 function setActiveStation(id) {
@@ -77,14 +78,14 @@ async function setStatus(b, status) {
 <template>
   <div v-if="d">
     <div class="hint">
-      🎫 <b>Quy trình phôi thẻ in sẵn:</b> (1) Sinh phôi số tuần tự → (2) Tải ZIP các file SVG gửi nhà in in số nhảy lên thẻ màu →
+      <MIcon name="tag" /> <b>Quy trình phôi thẻ in sẵn:</b> (1) Sinh phôi số tuần tự → (2) Tải ZIP các file SVG gửi nhà in in số nhảy lên thẻ màu →
       (3) Tại sự kiện, lễ tân quét mã khách + mã phôi ở tab <b>Gán thẻ</b> để gán. Thẻ mất → gán thẻ mới + ngừng thẻ cũ.
     </div>
 
     <div class="card">
       <h3>Sinh & xuất phôi thẻ</h3>
       <div class="toolbar" style="margin:12px 0 0">
-        <a class="lnk-btn green" :class="{ dis: !d.total }" :href="exportUrl" download>⬇ Tải ZIP phôi (SVG) gửi nhà in</a>
+        <a class="lnk-btn green" :class="{ dis: !d.total }" :href="exportUrl" download><MIcon name="download" /> Tải ZIP phôi (SVG) gửi nhà in</a>
         <div style="width:130px"><MInput v-model="count" type="number" placeholder="Số lượng" /></div>
         <MButton variant="primary" @click="generate">+ Sinh phôi</MButton>
       </div>
@@ -98,7 +99,7 @@ async function setStatus(b, status) {
     </div>
 
     <div class="toolbar">
-      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="🔍 Tìm mã phôi hoặc tên khách..." clearable /></div>
+      <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="Tìm mã phôi hoặc tên khách..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
       <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'paired', label: 'Đã gán' }, { value: 'unpaired', label: 'Phôi trắng' }, { value: 'stopped', label: 'Đã ngừng' }]" /></div>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.total }}</b> phôi</div>
@@ -127,7 +128,7 @@ async function setStatus(b, status) {
 
     <!-- Trạm in - in tem QR khách từ điện thoại, không cần Chrome/máy tính trung gian -->
     <div class="card" style="margin-top:16px">
-      <h3>🖨 Trạm in (in từ điện thoại)</h3>
+      <h3><MIcon name="printer" /> Trạm in (in từ điện thoại)</h3>
       <p class="muted" style="margin:6px 0 14px">
         <b>LAN</b>: máy in có địa chỉ IP riêng, máy chủ gửi thẳng lệnh in qua mạng.
         <b>Agent</b>: chạy chương trình nhỏ trên 1 máy tính (xem <code>print-agent/README.md</code>) - dùng khi máy in là USB hoặc mạng máy in không thông với máy chủ.
@@ -163,7 +164,7 @@ async function setStatus(b, status) {
           </tbody>
         </table>
       </div>
-      <p v-else class="muted">Chưa có trạm in nào - nút "🖨 In tem" ở các tab khác sẽ in qua trình duyệt như cũ.</p>
+      <p v-else class="muted">Chưa có trạm in nào - nút "In tem" ở các tab khác sẽ in qua trình duyệt như cũ.</p>
       <p v-if="activeStationId" class="muted" style="margin-top:8px">
         Đang in qua trạm đã chọn ở trên. <a href="#" @click.prevent="clearActiveStation">Ngừng dùng, quay lại in qua trình duyệt</a>.
       </p>

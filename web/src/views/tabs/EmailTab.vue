@@ -10,6 +10,7 @@ import MDialog from '../../components/mds/MDialog.vue';
 import MTabs from '../../components/mds/MTabs.vue';
 import MTag from '../../components/mds/MTag.vue';
 import BodyEditor from '../../components/BodyEditor.vue';
+import MIcon from '../../components/mds/MIcon.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -173,7 +174,7 @@ onMounted(loadGroups);
 <template>
   <div v-if="loaded">
     <div class="hint">
-      ✉️ Dùng các biến trong tiêu đề/nội dung, hệ thống tự thay khi gửi:
+      <MIcon name="mail" /> Dùng các biến trong tiêu đề/nội dung, hệ thống tự thay khi gửi:
       <code v-for="v in tplVars" :key="v">{{ v }}</code>
       <span class="muted">(<code>{{ tplVars[5] }}</code> là vị trí chèn mã QR — bỏ trống thì QR gắn cuối thư). Ảnh header/footer dùng chung cho cả 2 thư.</span>
     </div>
@@ -183,8 +184,8 @@ onMounted(loadGroups);
       <div class="page-head" style="margin-bottom:4px">
         <h3>Email xác nhận (gửi khi thêm người)</h3>
         <div style="display:flex;gap:8px">
-          <MButton variant="secondary" size="md" @click="applySuggest('confirm')">✨ Chèn nội dung gợi ý</MButton>
-          <MButton variant="secondary" size="md" @click="preview('confirm')">👁 Xem trước</MButton>
+          <MButton variant="secondary" size="md" @click="applySuggest('confirm')"><MIcon name="sparkles" /> Chèn nội dung gợi ý</MButton>
+          <MButton variant="secondary" size="md" @click="preview('confirm')"><MIcon name="eye" /> Xem trước</MButton>
         </div>
       </div>
       <MCheckbox v-model="f.auto_send_confirm" label="Tự động gửi ngay khi thêm người tham dự" style="margin:8px 0" />
@@ -225,8 +226,8 @@ onMounted(loadGroups);
       <div class="page-head" style="margin-bottom:4px">
         <h3>Email cảm ơn (gửi tự động sau check-in)</h3>
         <div style="display:flex;gap:8px">
-          <MButton variant="secondary" size="md" @click="applySuggest('thank')">✨ Chèn nội dung gợi ý</MButton>
-          <MButton variant="secondary" size="md" @click="preview('thank')">👁 Xem trước</MButton>
+          <MButton variant="secondary" size="md" @click="applySuggest('thank')"><MIcon name="sparkles" /> Chèn nội dung gợi ý</MButton>
+          <MButton variant="secondary" size="md" @click="preview('thank')"><MIcon name="eye" /> Xem trước</MButton>
         </div>
       </div>
       <MCheckbox v-model="f.thank_enabled" label="Bật gửi email cảm ơn tự động" style="margin:8px 0" />
@@ -236,11 +237,11 @@ onMounted(loadGroups);
       <BodyEditor ref="thankEditor" v-model="f.thank_body" />
     </div>
 
-    <MButton v-if="canManage" variant="primary" @click="onSave">💾 Lưu cài đặt</MButton>
+    <MButton v-if="canManage" variant="primary" @click="onSave"><MIcon name="device-floppy" /> Lưu cài đặt</MButton>
 
     <!-- Nhóm khách - mỗi nhóm có thể soạn nội dung email riêng, tự động chọn đúng khi gửi -->
     <div class="card">
-      <h3>👥 Nhóm khách &amp; nội dung email riêng</h3>
+      <h3><MIcon name="users" /> Nhóm khách &amp; nội dung email riêng</h3>
       <p class="muted" style="margin:6px 0 14px">Gán khách vào nhóm ở tab Người tham dự/import Excel (cột "Nhóm khách"). Nhóm nào không soạn mẫu riêng ở đây sẽ dùng nội dung mặc định phía trên.</p>
       <div v-if="canManage" style="display:flex;gap:8px;margin-bottom:14px">
         <div style="flex:1;max-width:280px"><MInput v-model="newGroupName" placeholder="VD: Khách VIP, Hiệp hội..." @keyup.enter="addGroup" /></div>
@@ -250,14 +251,14 @@ onMounted(loadGroups);
       <div v-else class="group-list">
         <div v-for="g in groups" :key="g.id" class="group-row">
           <b style="flex:1">{{ g.name }}</b>
-          <MButton variant="secondary" @click="openGroupEmail(g)">✉️ Soạn email riêng</MButton>
+          <MButton variant="secondary" @click="openGroupEmail(g)"><MIcon name="mail" /> Soạn email riêng</MButton>
           <MButton v-if="canManage" variant="danger" @click="deleteGroup(g)">Xoá</MButton>
         </div>
       </div>
     </div>
   </div>
 
-  <MDialog v-model="pvOpen" title="👁 Xem trước email" :width="760" confirm-text="Đóng" @confirm="pvOpen = false">
+  <MDialog v-model="pvOpen" title="Xem trước email" :width="760" confirm-text="Đóng" @confirm="pvOpen = false">
     <p class="muted" style="margin-bottom:8px"><b>Tiêu đề:</b> {{ pvSubject }}</p>
     <iframe :srcdoc="pvHtml" style="width:100%;height:56vh;border:1px solid var(--app-border);border-radius:8px;background:#f3f4f6"></iframe>
   </MDialog>
@@ -288,13 +289,13 @@ onMounted(loadGroups);
       <input ref="groupFooterInput" type="file" accept="image/*" hidden @change="e => onGroupUpload('footer', e)" />
 
       <div style="display:flex;gap:8px;margin-top:16px">
-        <MButton variant="secondary" @click="previewGroup">👁 Xem trước</MButton>
-        <MButton variant="primary" @click="saveGroupTemplate()">💾 Lưu mẫu của nhóm</MButton>
+        <MButton variant="secondary" @click="previewGroup"><MIcon name="eye" /> Xem trước</MButton>
+        <MButton variant="primary" @click="saveGroupTemplate()"><MIcon name="device-floppy" /> Lưu mẫu của nhóm</MButton>
       </div>
     </div>
   </MDialog>
 
-  <MDialog v-model="gPvOpen" title="👁 Xem trước email (nhóm)" :width="760" confirm-text="Đóng" @confirm="gPvOpen = false">
+  <MDialog v-model="gPvOpen" title="Xem trước email (nhóm)" :width="760" confirm-text="Đóng" @confirm="gPvOpen = false">
     <p class="muted" style="margin-bottom:8px"><b>Tiêu đề:</b> {{ gPvSubject }}</p>
     <iframe :srcdoc="gPvHtml" style="width:100%;height:56vh;border:1px solid var(--app-border);border-radius:8px;background:#f3f4f6"></iframe>
   </MDialog>

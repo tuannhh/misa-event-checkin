@@ -7,6 +7,7 @@ import MDialog from '../components/mds/MDialog.vue';
 import MInput from '../components/mds/MInput.vue';
 import MSelect from '../components/mds/MSelect.vue';
 import MTag from '../components/mds/MTag.vue';
+import MIcon from '../components/mds/MIcon.vue';
 
 const toast = useToast();
 const users = ref([]);
@@ -66,8 +67,8 @@ async function onImport(e) {
   <div class="page-head">
     <h2>Thành viên</h2>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <a class="lnk-btn" href="/api/users/template" download>⬇ File Excel mẫu</a>
-      <MButton variant="secondary" @click="fileInput.click()">⬆ Import Excel</MButton>
+      <a class="lnk-btn" href="/api/users/template" download><MIcon name="download" /> File Excel mẫu</a>
+      <MButton variant="secondary" @click="fileInput.click()"><MIcon name="upload" /> Import Excel</MButton>
       <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
       <MButton variant="primary" @click="openCreate">+ Thêm thành viên</MButton>
     </div>
@@ -86,7 +87,7 @@ async function onImport(e) {
           <td style="white-space:nowrap;text-align:right">
             <span class="cell-actions" style="justify-content:flex-end">
               <MButton v-if="u.role !== 'super_admin' || auth.user.id === u.id" variant="secondary" size="md" @click="openEdit(u)">Sửa</MButton>
-              <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" @click="del(u)">✕</MButton>
+              <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" @click="del(u)"><MIcon name="trash" /></MButton>
             </span>
           </td>
         </tr>

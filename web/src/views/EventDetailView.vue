@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue';
 import { useRouter } from 'vue-router';
-import { api, auth, fmtDate, eventDayStatus, staffTabsFor, needsOnsite } from '../api';
+import { api, auth, eventSidebar, fmtDate, eventDayStatus, staffTabsFor, needsOnsite } from '../api';
 import MButton from '../components/mds/MButton.vue';
-import MTabs from '../components/mds/MTabs.vue';
 import MTag from '../components/mds/MTag.vue';
 import MSpinner from '../components/mds/MSpinner.vue';
+import { iconPaths } from '../components/mds/icons.js';
+import MIcon from '../components/mds/MIcon.vue';
 
 // Các tab đã chuyển sang Vue (GĐ2). Tab chưa làm (GĐ3-4) sẽ hiện placeholder.
 const tabComponents = {
@@ -36,9 +37,9 @@ const tabs = computed(() => {
   if (!ev.value) return [];
   if (!isCheckin.value) {
     return [
-      { key: 'attendees', label: '👥 Người tham dự' }, { key: 'scan', label: '📷 Quét QR' },
-      { key: 'booths', label: '🧭 Booth' }, { key: 'badges', label: '🎫 Phôi thẻ' },
-      { key: 'email', label: '✉️ Email' }, { key: 'report', label: '📊 Báo cáo' }, { key: 'staff', label: '🧑‍💼 Nhân viên' },
+      { key: 'attendees', label: 'Người tham dự', icon: 'users' }, { key: 'scan', label: 'Quét QR', icon: 'camera' },
+      { key: 'booths', label: 'Booth', icon: 'map-pin' }, { key: 'badges', label: 'Phôi thẻ', icon: 'credit-card' },
+      { key: 'email', label: 'Email', icon: 'mail' }, { key: 'report', label: 'Báo cáo', icon: 'chart-bar' }, { key: 'staff', label: 'Nhân viên', icon: 'briefcase' },
     ];
   }
   return staffTabsFor(ev.value);
@@ -68,38 +69,58 @@ async function load() {
 onMounted(load);
 watch(() => props.id, load);
 
-async function delEvent() {
-  if (!confirm(`Xoá sự kiện "${ev.value.name}" và toàn bộ danh sách?`)) return;
-  await api('/events/' + props.id, { method: 'DELETE' });
-  router.push('/events');
-}
+// Đẩy danh sách tab tính năng của sự kiện đang mở lên sidebar chính (App.vue) - sidebar
+// TRÁI DUY NHẤT của app hiển thị đúng các tab này làm nội dung chính, thay vì lồng thêm
+// 1 sidebar phụ bên trong trang. Nhân viên hiện trường (isCheckin) dùng bottom-nav riêng,
+// không đụng đến sidebar chính.
+watch(
+  () => (isCheckin.value ? null : { items: tabs.value, key: activeTab.value, name: ev.value?.name || '' }),
+  (state) => {
+    if (!state) { eventSidebar.active = false; return; }
+    eventSidebar.active = true;
+    eventSidebar.eventName = state.name;
+    eventSidebar.items = state.items;
+    eventSidebar.activeKey = state.key;
+    eventSidebar.onSelect = (k) => { activeTab.value = k; };
+  },
+  { immediate: true }
+);
+onBeforeUnmount(() => { eventSidebar.active = false; eventSidebar.items = []; eventSidebar.onSelect = null; });
 </script>
 
 <template>
   <div v-if="loading" style="text-align:center;padding:40px"><MSpinner :size="28" /></div>
-  <div v-else-if="err" class="card">{{ err }} <RouterLink to="/events">← Quay lại</RouterLink></div>
+  <div v-else-if="err" class="card">{{ err }} <RouterLink to="/events"><MIcon name="arrow-left" /> Quay lại</RouterLink></div>
   <template v-else-if="ev">
-    <div class="page-head">
+    <!-- Tên sự kiện đã hiện ở header (company-name, bấm vào quay lại danh sách) và tab đang
+         chọn đã hiện ở sidebar - page-head ở đây chỉ còn giữ dòng meta (thời gian/đơn vị),
+         không lặp lại tên sự kiện + breadcrumb (từng "lơ lửng" do trùng thông tin với header). -->
+    <div v-if="!isCheckin" class="muted" style="margin-bottom:16px">
+      <MIcon name="clock" /> {{ fmtDate(ev.event_date) }} · <MIcon name="user" /> {{ ev.organizer || '—' }}<template v-if="ev.unit"> · <MIcon name="building" /> {{ ev.unit }}</template>
+    </div>
+    <div v-else class="page-head">
       <div>
-        <RouterLink to="/events" class="muted" style="text-decoration:none">← Tất cả sự kiện</RouterLink>
+        <RouterLink to="/events" class="muted" style="text-decoration:none"><MIcon name="arrow-left" /> Tất cả sự kiện</RouterLink>
         <h2 style="margin-top:4px">{{ ev.name }}</h2>
-        <div class="muted">🕒 {{ fmtDate(ev.event_date) }} · 👤 {{ ev.organizer || '—' }}<template v-if="ev.unit"> · 🏢 {{ ev.unit }}</template></div>
-      </div>
-      <div v-if="ev.can_manage" style="display:flex;gap:8px">
-        <MButton variant="danger" @click="delEvent">Xoá</MButton>
+        <div class="muted"><MIcon name="clock" /> {{ fmtDate(ev.event_date) }} · <MIcon name="user" /> {{ ev.organizer || '—' }}<template v-if="ev.unit"> · <MIcon name="building" /> {{ ev.unit }}</template></div>
       </div>
     </div>
 
     <div v-if="dayLocked" class="card" style="text-align:center;padding:40px 20px">
-      <div style="font-size:42px">🔒</div>
+      <div style="font-size:42px;display:flex;justify-content:center"><MIcon name="lock" :size="42" /></div>
       <h3 style="margin:10px 0">{{ eventDayStatus(ev) === 'future' ? 'Sự kiện chưa tới ngày tổ chức' : 'Sự kiện đã kết thúc' }}</h3>
       <p class="muted">Chỉ có thể thao tác vào đúng ngày tổ chức sự kiện.</p>
-      <RouterLink to="/events"><MButton variant="primary" style="margin-top:12px">← Về danh sách</MButton></RouterLink>
+      <RouterLink to="/events"><MButton variant="primary" style="margin-top:12px"><MIcon name="arrow-left" /> Về danh sách</MButton></RouterLink>
     </div>
 
     <template v-else>
-      <MTabs v-if="!isCheckin" v-model="activeTab" :tabs="tabs" variant="underline" />
-      <div :style="isCheckin ? 'margin-top:12px' : 'margin-top:16px'" :class="{ 'field-content': isCheckin }">
+      <div v-if="!isCheckin" style="margin-top:16px">
+        <component v-if="activeComponent" :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />
+        <div v-else class="card">
+          <p class="muted">Tab <b>{{ activeTab }}</b> đang được chuyển sang giao diện Vue mới (giai đoạn tiếp theo). Chức năng backend đã sẵn sàng trên MySQL.</p>
+        </div>
+      </div>
+      <div v-else class="field-content" style="margin-top:12px">
         <component v-if="activeComponent" :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />
         <div v-else class="card">
           <p class="muted">Tab <b>{{ activeTab }}</b> đang được chuyển sang giao diện Vue mới (giai đoạn tiếp theo). Chức năng backend đã sẵn sàng trên MySQL.</p>
@@ -110,7 +131,10 @@ async function delEvent() {
            cấm dãy icon không nhãn). Chỉ hiện khi có từ 2 tab trở lên; 1 tab thì không cần chuyển. -->
       <nav v-if="isCheckin && tabs.length > 1" class="field-bottom-nav">
         <button v-for="t in tabs.slice(0, 5)" :key="t.key" class="field-nav-item" :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
-          {{ t.label }}
+          <svg v-if="iconPaths(t.icon)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+            <path v-for="(d, i) in iconPaths(t.icon)" :key="i" :d="d" />
+          </svg>
+          <span>{{ t.label }}</span>
         </button>
       </nav>
     </template>
@@ -128,8 +152,8 @@ async function delEvent() {
 }
 .field-nav-item {
   flex: 1; min-height: 56px; border: none; background: transparent; cursor: pointer;
-  font-size: 12px; font-weight: 600; color: #6b7280; line-height: 1.3; padding: 6px 4px;
-  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-size: 12px; font-weight: 600; color: #6b7280; line-height: 1.3; padding: 6px 4px; gap: 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
 }
 .field-nav-item.active { color: var(--mds-brand-600, #2563eb); background: var(--mds-brand-50, #eff6ff); }
 </style>

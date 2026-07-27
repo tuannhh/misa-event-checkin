@@ -1,42 +1,58 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { api, auth, STAFF_TYPE_NAMES } from '../../api';
+import { api } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
 import MSelect from '../../components/mds/MSelect.vue';
+import MCheckbox from '../../components/mds/MCheckbox.vue';
 import MDialog from '../../components/mds/MDialog.vue';
+import MTag from '../../components/mds/MTag.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
 const all = ref([]);
 const booths = ref([]);
-const rowState = reactive({});   // uid -> { checked, staff_type, booth_id }
+const roles = ref([]); // nhóm mẫu dùng chung + nhóm riêng của sự kiện này
+const permissions = ref([]); // danh mục 8 quyền
+const rowState = reactive({}); // uid -> { checked, role_id, booth_id }
 const fileInput = ref(null);
 
-const typeOptions = Object.entries(STAFF_TYPE_NAMES).map(([value, label]) => ({ value, label }));
+const roleOptions = computed(() => roles.value.map(r => ({ value: String(r.id), label: r.is_template ? r.name : `${r.name} (riêng)` })));
 const boothOptions = computed(() => [{ value: '', label: '🚪 Cổng check-in (ghi nhận tham dự)' }, ...booths.value.map(b => ({ value: String(b.id), label: '🧭 Booth: ' + b.name }))]);
+const roleById = computed(() => Object.fromEntries(roles.value.map(r => [String(r.id), r])));
 
 async function load() {
   const ev = await api('/events/' + props.ev.id);
   booths.value = ev.booths;
+  roles.value = await api(`/staff-roles?event_id=${props.ev.id}`);
+  permissions.value = await api('/permissions');
   all.value = await api(`/events/${props.ev.id}/available-staff`);
-  const assigned = new Map(ev.staff.map(s => [s.id, { booth_id: s.booth_id ? String(s.booth_id) : '', staff_type: s.staff_type || 'checkin' }]));
+  const assigned = new Map(ev.staff.map(s => [s.id, { booth_id: s.booth_id ? String(s.booth_id) : '', role_id: s.role_id ? String(s.role_id) : '' }]));
+  const defaultRoleId = roleOptions.value[0]?.value || '';
   for (const u of all.value) {
     const a = assigned.get(u.id);
-    rowState[u.id] = { checked: !!a, staff_type: a?.staff_type || 'checkin', booth_id: a?.booth_id || '' };
+    rowState[u.id] = { checked: !!a, role_id: a?.role_id || defaultRoleId, booth_id: a?.booth_id || '' };
   }
 }
 onMounted(load);
 
+function roleNeedsBooth(roleId) {
+  const r = roleById.value[roleId];
+  return !!r && (r.permissions.includes('note') || r.permissions.includes('mark_potential'));
+}
+function roleForcesGate(roleId) {
+  const r = roleById.value[roleId];
+  return !!r && r.checkin_list_scope === 'all';
+}
 function posDisabled(uid) {
   const s = rowState[uid];
-  return !s.checked || s.staff_type === 'reception' || s.staff_type === 'manager';
+  return !s.checked || roleForcesGate(s.role_id);
 }
-function onTypeChange(uid) {
+function onRoleChange(uid) {
   const s = rowState[uid];
-  if (s.staff_type === 'reception' || s.staff_type === 'manager') s.booth_id = '';
-  else if (s.staff_type === 'supervisor' && !s.booth_id && booths.value.length) s.booth_id = String(booths.value[0].id);
+  if (roleForcesGate(s.role_id)) s.booth_id = '';
+  else if (roleNeedsBooth(s.role_id) && !s.booth_id && booths.value.length) s.booth_id = String(booths.value[0].id);
 }
 
 async function save() {
@@ -44,8 +60,8 @@ async function save() {
   for (const u of all.value) {
     const s = rowState[u.id];
     if (!s.checked) continue;
-    if (s.staff_type === 'supervisor' && !s.booth_id) { toast.warning('Giám sát booth phải chọn 1 booth. Tạo booth ở tab Booth trước.'); return; }
-    assignments.push({ user_id: u.id, booth_id: s.booth_id ? Number(s.booth_id) : null, staff_type: s.staff_type });
+    if (roleNeedsBooth(s.role_id) && !s.booth_id) { toast.warning('Nhóm chức năng này bắt buộc chọn 1 booth. Tạo booth ở tab Booth trước.'); return; }
+    assignments.push({ user_id: u.id, booth_id: s.booth_id ? Number(s.booth_id) : null, role_id: Number(s.role_id) });
   }
   try { await api(`/events/${props.ev.id}/staff`, { method: 'PUT', body: { assignments } }); toast.success('Đã lưu danh sách nhân viên'); }
   catch (e) { toast.error(e.message); }
@@ -70,6 +86,39 @@ async function onImport(e) {
   } catch (err) { toast.error(err.message); }
   e.target.value = '';
 }
+
+/* Quản lý nhóm chức năng (tick quyền) - tạo nhóm mới không cần sửa code */
+const rolesDlgOpen = ref(false);
+const scopeOptions = [
+  { value: 'checked_in', label: 'Chỉ người đã check-in' },
+  { value: 'all', label: 'Toàn bộ khách (như Lễ tân)' },
+  { value: 'my_booth', label: 'Chỉ khách ghé booth mình' },
+];
+const editingId = ref(null); // null = đang tạo mới
+const rf = reactive({ name: '', checkin_list_scope: 'checked_in', permissions: [] });
+function openRoleNew() { editingId.value = null; Object.assign(rf, { name: '', checkin_list_scope: 'checked_in', permissions: [] }); }
+function openRoleEdit(r) { editingId.value = r.id; Object.assign(rf, { name: r.name, checkin_list_scope: r.checkin_list_scope, permissions: [...r.permissions] }); }
+async function saveRole() {
+  if (!rf.name.trim()) { toast.warning('Cần nhập tên nhóm chức năng'); return; }
+  try {
+    if (editingId.value) {
+      await api(`/staff-roles/${editingId.value}`, { method: 'PUT', body: { name: rf.name, checkin_list_scope: rf.checkin_list_scope, permissions: rf.permissions } });
+    } else {
+      await api('/staff-roles', { method: 'POST', body: { event_id: props.ev.id, name: rf.name, checkin_list_scope: rf.checkin_list_scope, permissions: rf.permissions } });
+    }
+    toast.success('Đã lưu nhóm chức năng');
+    openRoleNew();
+    roles.value = await api(`/staff-roles?event_id=${props.ev.id}`);
+  } catch (e) { toast.error(e.message); }
+}
+async function deleteRole(r) {
+  if (!confirm(`Xoá nhóm chức năng "${r.name}"?`)) return;
+  try {
+    await api(`/staff-roles/${r.id}`, { method: 'DELETE' });
+    toast.success('Đã xoá');
+    roles.value = await api(`/staff-roles?event_id=${props.ev.id}`);
+  } catch (e) { toast.error(e.message); }
+}
 </script>
 
 <template>
@@ -80,19 +129,20 @@ async function onImport(e) {
         <a class="lnk-btn" :href="`/api/events/${ev.id}/staff/template`" download>⬇ Excel mẫu</a>
         <MButton variant="secondary" @click="fileInput.click()">⬆ Import Excel</MButton>
         <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
+        <MButton variant="secondary" @click="rolesDlgOpen = true">🧩 Nhóm chức năng</MButton>
         <MButton variant="primary" @click="openNew">+ Tạo tài khoản nhân viên mới</MButton>
       </div>
     </div>
-    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>vai trò</b> và <b>vị trí</b>. Lễ tân/Quản lý luôn ở Cổng; Giám sát bắt buộc chọn 1 booth.</p>
+    <p class="muted" style="margin:6px 0 14px">Tích chọn nhân viên, chọn <b>nhóm chức năng</b> và <b>vị trí</b>. Nhóm chưa đúng ý? Bấm "🧩 Nhóm chức năng" để tạo nhóm riêng, tick đúng quyền cần cho sự kiện này.</p>
 
     <div v-if="all.length" class="card" style="padding:0;overflow-x:auto">
       <table class="tbl">
-        <thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Vai trò tại sự kiện</th><th>Vị trí</th></tr></thead>
+        <thead><tr><th style="width:40px"></th><th>Nhân viên</th><th>Nhóm chức năng</th><th>Vị trí</th></tr></thead>
         <tbody>
           <tr v-for="u in all" :key="u.id">
-            <td><input type="checkbox" v-model="rowState[u.id].checked" @change="onTypeChange(u.id)" /></td>
+            <td><input type="checkbox" v-model="rowState[u.id].checked" @change="onRoleChange(u.id)" /></td>
             <td><b>{{ u.name }}</b><br><span class="muted">{{ u.email }}<template v-if="u.unit"> · {{ u.unit }}</template></span></td>
-            <td style="min-width:180px"><MSelect v-model="rowState[u.id].staff_type" :options="typeOptions" :disabled="!rowState[u.id].checked" @update:modelValue="onTypeChange(u.id)" /></td>
+            <td style="min-width:200px"><MSelect v-model="rowState[u.id].role_id" :options="roleOptions" :disabled="!rowState[u.id].checked" @update:modelValue="onRoleChange(u.id)" /></td>
             <td style="min-width:220px"><MSelect v-model="rowState[u.id].booth_id" :options="boothOptions" :disabled="posDisabled(u.id)" /></td>
           </tr>
         </tbody>
@@ -112,6 +162,37 @@ async function onImport(e) {
     <label class="fld">Email đăng nhập *</label><MInput v-model="nf.email" type="email" />
     <label class="fld">Mật khẩu *</label><MInput v-model="nf.password" type="text" />
   </MDialog>
+
+  <MDialog v-model="rolesDlgOpen" title="Nhóm chức năng" :width="720">
+    <div class="roles-grid">
+      <div class="roles-list">
+        <div v-for="r in roles" :key="r.id" class="role-row" :class="{ active: editingId === r.id }">
+          <div style="flex:1;min-width:0">
+            <b>{{ r.name }}</b>
+            <MTag v-if="r.is_template" style="margin-left:6px">Mẫu dùng chung</MTag>
+            <div class="muted" style="font-size:12px">{{ r.permissions.length ? r.permissions.join(', ') : 'Không có quyền nào (chỉ xem số liệu ẩn danh)' }}</div>
+          </div>
+          <MButton variant="secondary" @click="openRoleEdit(r)">Sửa</MButton>
+          <MButton variant="danger" @click="deleteRole(r)">Xoá</MButton>
+        </div>
+      </div>
+      <div class="role-form">
+        <h4 style="margin:0 0 8px">{{ editingId ? 'Sửa nhóm chức năng' : 'Tạo nhóm chức năng mới (riêng cho sự kiện này)' }}</h4>
+        <label class="fld">Tên nhóm *</label>
+        <MInput v-model="rf.name" placeholder="VD: Tư vấn, Kỹ thuật..." />
+        <label class="fld" style="margin-top:10px">Phạm vi xem danh sách check-in</label>
+        <MSelect v-model="rf.checkin_list_scope" :options="scopeOptions" />
+        <label class="fld" style="margin-top:10px">Quyền được tick</label>
+        <div class="perm-list">
+          <MCheckbox v-for="p in permissions" :key="p.code" v-model="rf.permissions" :value="p.code" :label="`${p.name} — ${p.description}`" />
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <MButton variant="secondary" @click="openRoleNew" v-if="editingId">Huỷ sửa, tạo mới</MButton>
+          <MButton variant="primary" @click="saveRole">💾 Lưu nhóm chức năng</MButton>
+        </div>
+      </div>
+    </div>
+  </MDialog>
 </template>
 
 <style scoped>
@@ -121,4 +202,12 @@ h3 { font-size: 16px; font-weight: 700; margin: 0; }
 .tbl th { background: #f9fafb; font-weight: 600; white-space: nowrap; }
 .lnk-btn { display: inline-flex; align-items: center; padding: 0 14px; height: 32px; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; color: #374151; text-decoration: none; font-weight: 600; font-size: 13px; }
 .lnk-btn:hover { background: var(--app-bg); }
+.roles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.roles-list { display: flex; flex-direction: column; gap: 8px; max-height: 480px; overflow-y: auto; }
+.role-row { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--app-border); border-radius: 8px; }
+.role-row.active { border-color: var(--mds-brand-600, #2563eb); }
+.perm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+@media (max-width: 720px) {
+  .roles-grid { grid-template-columns: 1fr; }
+}
 </style>

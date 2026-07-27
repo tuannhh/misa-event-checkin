@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { api, auth, fmtDate, eventDayStatus, defaultStaffTab } from '../api';
+import { api, auth, fmtDate, eventDayStatus, staffTabsFor, needsOnsite } from '../api';
 import { useToast } from '../components/mds/toast.js';
 import MButton from '../components/mds/MButton.vue';
 import MDialog from '../components/mds/MDialog.vue';
@@ -25,7 +25,7 @@ async function load() {
   loading.value = false;
   if (isStaff.value) {
     const todays = events.value.filter(e => eventDayStatus(e) === 'today');
-    if (todays.length === 1) router.push(`/event/${todays[0].id}/${defaultStaffTab(todays[0].my_staff_type)}`);
+    if (todays.length === 1) router.push(`/event/${todays[0].id}/${staffTabsFor(todays[0])[0].key}`);
   }
 }
 onMounted(load);
@@ -36,12 +36,11 @@ function statusOf(ev) {
   if (s === 'future') return { color: 'warning', text: 'Chưa tới ngày' };
   return { color: 'success', text: 'Đang diễn ra hôm nay' };
 }
-function locked(ev) { return isStaff.value && eventDayStatus(ev) !== 'today' && ev.my_staff_type !== 'manager'; }
+function locked(ev) { return isStaff.value && eventDayStatus(ev) !== 'today' && needsOnsite(ev); }
+const OPEN_BTN_TEXT = { scan: '📷 Vào quét', monitor: '📝 Vào ghi chú', reception: '🖨 Vào lễ tân', dashboard: '📊 Xem số liệu' };
 function openBtnText(ev) {
   if (!isStaff.value) return 'Mở';
-  return ev.my_staff_type === 'supervisor' ? '📝 Vào ghi chú'
-    : ev.my_staff_type === 'reception' ? '🖨 Vào lễ tân'
-    : ev.my_staff_type === 'manager' ? '📊 Xem số liệu' : '📷 Vào quét';
+  return OPEN_BTN_TEXT[staffTabsFor(ev)[0].key] || 'Mở';
 }
 function openEvent(ev) { if (!locked(ev)) router.push('/event/' + ev.id); }
 

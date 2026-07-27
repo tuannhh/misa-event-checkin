@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue';
 import { useRouter } from 'vue-router';
-import { api, auth, fmtDate, eventDayStatus } from '../api';
+import { api, auth, fmtDate, eventDayStatus, staffTabsFor, needsOnsite } from '../api';
 import MButton from '../components/mds/MButton.vue';
 import MTabs from '../components/mds/MTabs.vue';
 import MTag from '../components/mds/MTag.vue';
@@ -29,37 +29,33 @@ const loading = ref(true);
 const err = ref('');
 
 const isCheckin = computed(() => auth.user.role === 'checkin');
-const staffType = computed(() => isCheckin.value ? (ev.value?.my_position?.staff_type || 'checkin') : null);
 
+// Tab của nhân viên hiện trường suy ra TỪ QUYỀN thực tế (my_permissions), không còn hard-code
+// theo staff_type - tạo nhóm chức năng mới ở tab Nhân viên sẽ tự có đúng tab tương ứng.
 const tabs = computed(() => {
   if (!ev.value) return [];
-  if (staffType.value === 'supervisor') return [{ key: 'monitor', label: '📝 Ghi chú booth' }];
-  if (staffType.value === 'manager') return [{ key: 'dashboard', label: '📊 Số liệu' }];
-  if (staffType.value === 'reception') {
-    const t = [{ key: 'scan', label: '📷 Quét & Check-in' }];
-    if (ev.value.badge_count) t.push({ key: 'pair', label: '🎫 Gán thẻ' });
-    t.push({ key: 'reception', label: '🖨 Danh sách & In QR' });
-    return t;
+  if (!isCheckin.value) {
+    return [
+      { key: 'attendees', label: '👥 Người tham dự' }, { key: 'scan', label: '📷 Quét QR' },
+      { key: 'booths', label: '🧭 Booth' }, { key: 'badges', label: '🎫 Phôi thẻ' },
+      { key: 'email', label: '✉️ Email' }, { key: 'report', label: '📊 Báo cáo' }, { key: 'staff', label: '🧑‍💼 Nhân viên' },
+    ];
   }
-  if (isCheckin.value) {
-    const t = [{ key: 'scan', label: '📷 Quét QR' }];
-    if (ev.value.badge_count) t.push({ key: 'pair', label: '🎫 Gán thẻ' });
-    t.push({ key: 'attendees', label: '✅ Đã check-in' });
-    return t;
-  }
-  return [
-    { key: 'attendees', label: '👥 Người tham dự' }, { key: 'scan', label: '📷 Quét QR' },
-    { key: 'booths', label: '🧭 Booth' }, { key: 'badges', label: '🎫 Phôi thẻ' },
-    { key: 'email', label: '✉️ Email' }, { key: 'report', label: '📊 Báo cáo' }, { key: 'staff', label: '🧑‍💼 Nhân viên' },
-  ];
+  return staffTabsFor(ev.value);
 });
 
+// Nếu URL trỏ tới 1 tab không còn hợp lệ với quyền hiện tại (VD: đổi nhóm chức năng rồi tải
+// lại trang đang mở sẵn tab cũ, hoặc bookmark/PWA icon trỏ tab cũ) -> tự về tab đầu tiên hợp lệ
+// thay vì hiện màn trắng.
 const activeTab = computed({
-  get: () => props.tab || (tabs.value[0] && tabs.value[0].key) || 'attendees',
+  get: () => {
+    const valid = tabs.value.some(t => t.key === props.tab);
+    return valid ? props.tab : ((tabs.value[0] && tabs.value[0].key) || 'attendees');
+  },
   set: (k) => router.push(`/event/${props.id}/${k}`),
 });
 
-const dayLocked = computed(() => isCheckin.value && staffType.value !== 'manager' && ev.value && eventDayStatus(ev.value) !== 'today');
+const dayLocked = computed(() => isCheckin.value && ev.value && needsOnsite(ev.value) && eventDayStatus(ev.value) !== 'today');
 
 const activeComponent = computed(() => tabComponents[activeTab.value] || null);
 
@@ -102,13 +98,38 @@ async function delEvent() {
     </div>
 
     <template v-else>
-      <MTabs v-model="activeTab" :tabs="tabs" variant="underline" />
-      <div style="margin-top:16px">
+      <MTabs v-if="!isCheckin" v-model="activeTab" :tabs="tabs" variant="underline" />
+      <div :style="isCheckin ? 'margin-top:12px' : 'margin-top:16px'" :class="{ 'field-content': isCheckin }">
         <component v-if="activeComponent" :is="activeComponent" :key="activeTab" :ev="ev" @reload="load" />
         <div v-else class="card">
           <p class="muted">Tab <b>{{ activeTab }}</b> đang được chuyển sang giao diện Vue mới (giai đoạn tiếp theo). Chức năng backend đã sẵn sàng trên MySQL.</p>
         </div>
       </div>
+
+      <!-- Bottom nav mobile-first cho nhân viên hiện trường - tối đa 5 mục có icon+nhãn (MDS
+           cấm dãy icon không nhãn). Chỉ hiện khi có từ 2 tab trở lên; 1 tab thì không cần chuyển. -->
+      <nav v-if="isCheckin && tabs.length > 1" class="field-bottom-nav">
+        <button v-for="t in tabs.slice(0, 5)" :key="t.key" class="field-nav-item" :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
+          {{ t.label }}
+        </button>
+      </nav>
     </template>
   </template>
 </template>
+
+<style scoped>
+/* Nội dung tab cho nhân viên hiện trường: chừa chỗ cho bottom nav sticky bên dưới. */
+.field-content { padding-bottom: 76px; }
+
+.field-bottom-nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; background: #fff; border-top: 1px solid var(--app-border);
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+}
+.field-nav-item {
+  flex: 1; min-height: 56px; border: none; background: transparent; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: #6b7280; line-height: 1.3; padding: 6px 4px;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+}
+.field-nav-item.active { color: var(--mds-brand-600, #2563eb); background: var(--mds-brand-50, #eff6ff); }
+</style>

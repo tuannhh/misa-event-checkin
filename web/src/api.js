@@ -52,5 +52,29 @@ export function eventDayStatus(ev) {
 }
 
 export const ROLE_NAMES = { super_admin: 'Super Admin', admin: 'Admin', checkin: 'Nhân viên check-in' };
-export const STAFF_TYPE_NAMES = { checkin: 'Quét QR / Check-in', reception: 'Lễ tân in QR', supervisor: 'Giám sát booth', manager: 'Quản lý (xem số liệu)' };
-export function defaultStaffTab(t) { return t === 'supervisor' ? 'monitor' : t === 'manager' ? 'dashboard' : 'scan'; }
+
+// Quyền tick-chọn (Đợt 2) - thay cho staff_type cứng. `ev.my_permissions` do backend trả theo
+// nhóm chức năng đã gán (xem routes/lib/permissions.js). Dùng can(ev, 'checkin') thay vì so
+// sánh staff_type ở khắp nơi.
+export function can(ev, code) { return !!(ev && ev.my_permissions && ev.my_permissions.includes(code)); }
+
+// Quyền cần có mặt tại sự kiện (khoá theo ngày tổ chức) - khớp quy tắc backend (isEventToday
+// áp cho scan/walkin/badge). Ai chỉ có view_report/không quyền nào (VD "Quản lý") không bị khoá.
+const NEEDS_ONSITE_PERMS = ['checkin', 'note', 'mark_potential', 'assign_badge'];
+export function needsOnsite(ev) { return NEEDS_ONSITE_PERMS.some(p => can(ev, p)); }
+
+// Danh sách tab hiển thị cho nhân viên check-in, suy ra TỪ QUYỀN thực tế thay vì staff_type cứng
+// - dùng chung giữa EventsView (nút mở nhanh) và EventDetailView (thanh tab đầy đủ).
+export function staffTabsFor(ev) {
+  const t = [];
+  if (can(ev, 'checkin')) t.push({ key: 'scan', label: '📷 Quét QR' });
+  if (can(ev, 'assign_badge') && ev.badge_count) t.push({ key: 'pair', label: '🎫 Gán thẻ' });
+  if (can(ev, 'view_checkin_list')) {
+    if (ev.my_position?.staff_type === 'reception') t.push({ key: 'reception', label: '🖨 Danh sách & In QR' });
+    else t.push({ key: 'attendees', label: '✅ Đã check-in' });
+  }
+  if (can(ev, 'note') || can(ev, 'mark_potential')) t.push({ key: 'monitor', label: '📝 Ghi chú booth' });
+  if (can(ev, 'view_report')) t.push({ key: 'report', label: '📊 Báo cáo' });
+  if (!t.length) t.push({ key: 'dashboard', label: '📊 Số liệu' }); // không quyền nào -> chỉ xem số liệu ẩn danh
+  return t;
+}

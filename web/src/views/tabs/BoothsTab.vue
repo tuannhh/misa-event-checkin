@@ -14,10 +14,12 @@ async function load() { data.value = await api('/events/' + props.ev.id); }
 onMounted(load);
 
 const canManage = computed(() => data.value?.can_manage);
-const typeTag = (t) => t === 'reception' ? ' (Lễ tân in QR)' : t === 'supervisor' ? ' (Giám sát)' : t === 'manager' ? ' (Quản lý)' : '';
 const staffByBooth = computed(() => {
   const m = {};
-  for (const s of (data.value?.staff || [])) { const k = s.booth_id || 0; (m[k] = m[k] || []).push(s.name + typeTag(s.staff_type)); }
+  for (const s of (data.value?.staff || [])) {
+    const k = s.booth_id || 0;
+    (m[k] = m[k] || []).push(s.role_name ? `${s.name} (${s.role_name})` : s.name);
+  }
   return m;
 });
 

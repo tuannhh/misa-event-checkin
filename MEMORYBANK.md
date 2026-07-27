@@ -421,6 +421,48 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       cần thêm service Redis khi deploy — cập nhật `DEPLOY-NOI-BO.md` sau (đang lỗi thời từ trước).
     - Đợt 1 KHÔNG đổi bất kỳ dòng frontend nào (`web/`) — toàn bộ thay đổi chỉ ở backend, đúng
       tinh thần "gọn theo module, dễ diff" đã chốt với chủ dự án (mục 0.1 file kế hoạch).
+19. **Đợt 2 (Phân quyền tick-chọn) — PHẦN BACKEND HOÀN THÀNH (2026-07-27)** — vẫn nhánh
+    `backend-refactor-d1`, commit `6244e96`, verify bằng docker-compose.internal.yml + MySQL
+    thật (không chỉ đọc code) qua curl: đăng nhập, tạo sự kiện/booth/nhân viên, gán quyền, quét
+    bị chặn đúng, ghi chú độc lập giữa 2 quyền, tạo nhóm chức năng tuỳ chỉnh hoạt động ngay.
+    - **Thay `event_staff.staff_type`** (enum cứng 4 giá trị, hành vi rải ~15 chỗ trong code)
+      bằng **8 quyền tick-chọn**: `checkin`, `view_checkin_list` (có phạm vi
+      all/checked_in/my_booth), `view_pii` (tách riêng theo Q4 - xem báo cáo/danh sách được
+      nhưng ẩn email/SĐT nếu không có), `note`, `mark_potential`, `view_report`, `print_badge`
+      (mới chỉ là dữ liệu/cờ hiển thị FE - CHƯA có endpoint gate riêng, sẽ gate thật ở Đợt 4 khi
+      làm print job), `assign_badge`.
+    - Bảng mới: `permissions` (danh mục), `staff_roles` (nhóm chức năng - mẫu dùng chung
+      `event_id=NULL` hoặc riêng theo sự kiện), `staff_role_permissions` (ma trận tick),
+      `event_staff.role_id` + `extra_permissions` (JSON `{add:[],remove:[]}` - tick thêm/bớt
+      riêng 1 người không cần tạo nhóm mới). Migration
+      `migrations/20260727010000_staff_permissions.js` seed sẵn 4 nhóm mẫu tương đương 4
+      staff_type cũ và **backfill toàn bộ `event_staff` hiện có** sang đúng nhóm - không đổi
+      quyền ai đang được gán khi migration chạy.
+    - **Bẫy kỹ thuật mới**: knex `t.timestamp().defaultTo(knex.raw('UTC_TIMESTAMP()'))` KHÔNG
+      chạy được trên MySQL ("You have an error in your SQL syntax... near 'UTC_TIMESTAMP())'")
+      - MySQL bắt buộc bọc ngoặc cho default là biểu thức: phải viết
+      `knex.raw('(UTC_TIMESTAMP())')` (2 lớp ngoặc). Lỗi này khiến migration fail giữa chừng
+      → bảng đầu đã tạo nhưng `knex_migrations` chưa ghi nhận → chạy lại báo "Table already
+      exists". Nếu gặp lỗi này: `docker compose down -v` xoá sạch volume rồi chạy lại từ đầu,
+      đừng cố sửa DB đang dở.
+    - `routes/lib/permissions.js` (mới): `getAssignment/hasPerm/requirePerm` dùng chung +
+      `legacyStaffType()` suy ngược tên 4 nhóm mẫu về `staff_type` cũ (`checkin`/`reception`/
+      `supervisor`/`manager`) để **FE cũ (`web/`) chưa sửa vẫn chạy được tạm** trong lúc chờ
+      làm app mobile (Đợt 2 phần FE) - nhóm chức năng tự tạo mới (VD "Tư vấn") map về mặc định
+      `checkin` phía FE (không sập, nhưng FE cũ chưa vẽ đúng tab riêng cho nhóm đó).
+    - `routes/staff-roles.js` (mới): `GET /permissions`, `GET/POST/PUT/DELETE /staff-roles` -
+      tạo/sửa nhóm chức năng bằng API, không cần sửa code. `PUT /events/:id/staff/:userId`
+      (mới) đổi quyền/vị trí 1 người mà không cần gửi lại toàn bộ danh sách nhân viên.
+    - **Tightening có chủ đích** (khác 1:1 với hành vi cũ, đã cân nhắc): không nhóm mẫu nào
+      mặc định có `view_report` (kể cả "Nhân viên check-in"/"Lễ tân") - backend CŨ cho phép họ
+      gọi thẳng `/report` API dù FE luôn ẩn tab Báo cáo với 2 vai trò này; nay chặn đúng ở
+      backend luôn, không dựa vào FE ẩn để "coi như an toàn" nữa.
+    - **Việc CHƯA làm (còn lại của Đợt 2)**: (a) FE admin `web/src/views/tabs/StaffTab.vue`
+      vẫn gửi `staff_type` cũ khi gán nhân viên (BE tự quy đổi qua `legacyStaffType`/
+      `getLegacyRoleIdMap`, chưa có UI tick quyền/chọn nhóm chức năng thật); (b) màn hình quản
+      lý nhóm chức năng (CRUD + ma trận tick) - API đã có, UI chưa làm; (c) app mobile `/app`
+      cho nhân viên hiện trường (mục 4 kế hoạch nâng cấp) - CHƯA bắt đầu; (d) `print_badge`
+      chưa có gate thật ở backend, chỉ mới là quyền hiển thị.
 
 ---
 
@@ -561,7 +603,10 @@ docker compose -f docker-compose.internal.yml logs -f app
 docker compose -f docker-compose.internal.yml down             # giữ dữ liệu
 docker compose -f docker-compose.internal.yml down -v          # xoá luôn dữ liệu
 ```
-App ở http://localhost:3000. Super admin seed sẵn: tuanbui88vn@gmail.com / SocTho0607!9@@.
+App ở http://localhost:3000 (hoặc cổng đã map trong compose). Từ Đợt 1 (2026-07-27), tài khoản
+Super Admin KHÔNG còn hard-code - đọc từ biến môi trường `ADMIN_EMAIL`/`ADMIN_PASSWORD` (bắt
+buộc khai báo trong `docker-compose.internal.yml`/`.env` trước khi chạy lần đầu, xem
+`.env.example`). `SESSION_SECRET` cũng bắt buộc, không còn giá trị mặc định.
 
 ## 11. Quy tắc cập nhật file này
 

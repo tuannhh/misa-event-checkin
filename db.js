@@ -185,15 +185,24 @@ async function init() {
 
   for (const sql of statements) await pool.query(sql);
 
-  // Seed Super Admin lần đầu
+  // Seed Super Admin lần đầu - KHÔNG hard-code email/mật khẩu trong source.
+  // Bắt buộc khai báo ADMIN_EMAIL + ADMIN_PASSWORD qua biến môi trường (.env, docker-compose...).
   const [supers] = await pool.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
   if (!supers.length) {
-    const hash = bcrypt.hashSync('SocTho0607!9@@', 10);
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+    if (!email || !password) {
+      throw new Error(
+        'Chưa có tài khoản Super Admin nào trong database và thiếu biến môi trường ADMIN_EMAIL/ADMIN_PASSWORD ' +
+        'để tạo tài khoản đầu tiên. Đặt 2 biến này (VD trong file .env hoặc docker-compose) rồi khởi động lại.'
+      );
+    }
+    const hash = bcrypt.hashSync(password, 10);
     await pool.query(
-      "INSERT INTO users (name, department, unit, email, password_hash, role) VALUES ('Super Admin','','','tuanbui88vn@gmail.com',?,'super_admin')",
-      [hash]
+      "INSERT INTO users (name, department, unit, email, password_hash, role) VALUES ('Super Admin','','',?,?,'super_admin')",
+      [email, hash]
     );
-    console.log('✔ Đã tạo tài khoản Super Admin: tuanbui88vn@gmail.com');
+    console.log(`✔ Đã tạo tài khoản Super Admin: ${email}`);
   }
   // Đảm bảo có 1 dòng cấu hình SMTP
   await pool.query('INSERT IGNORE INTO smtp_settings (id) VALUES (1)');

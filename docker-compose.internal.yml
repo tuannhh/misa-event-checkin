@@ -48,8 +48,14 @@ services:
       - DB_NAME=checkin
       - PORT=3000
       - DATA_DIR=/data
-      # ĐỔI chuỗi bí mật này khi chạy thật (ký session đăng nhập):
+      # ĐỔI chuỗi bí mật này khi chạy thật (ký session đăng nhập). Sinh bằng: openssl rand -hex 32
       - SESSION_SECRET=doi-chuoi-bi-mat-nay-khi-chay-that
+      # Tài khoản Super Admin đầu tiên (chỉ dùng để tạo lúc DB rỗng) - ĐỔI khi chạy thật:
+      - ADMIN_EMAIL=admin@example.com
+      - ADMIN_PASSWORD=doi-mat-khau-nay-khi-chay-that
+      # Khoá mã hoá smtp_pass/brevo_api_key lưu trong DB - ĐỔI khi chạy thật. Sinh bằng: openssl rand -base64 32
+      # Không đặt biến này thì bí mật vẫn lưu được (dev/local) nhưng KHÔNG được mã hoá.
+      - ENCRYPTION_KEY=
       # Nếu chạy sau proxy HTTPS + gửi email qua Brevo, khai báo URL công khai để ảnh trong email hiển thị được:
       # - BASE_URL=https://checkin.noi-bo.misa.vn
     volumes:

@@ -1,4 +1,5 @@
 // Máy chủ chính - chạy bằng lệnh: npm start
+require('dotenv').config(); // đọc file .env nếu có (local dev); trên Docker/Cloud Run biến môi trường đã có sẵn
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
@@ -13,9 +14,17 @@ const IS_CLOUD = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || pr
 
 if (IS_CLOUD) app.set('trust proxy', 1); // chạy sau proxy HTTPS của nhà cung cấp cloud
 
+if (!process.env.SESSION_SECRET) {
+  console.error(
+    '✖ Thiếu biến môi trường SESSION_SECRET (chuỗi bí mật ký session đăng nhập). ' +
+    'Tạo bằng lệnh: openssl rand -hex 32, rồi đặt vào .env hoặc docker-compose trước khi chạy lại.'
+  );
+  process.exit(1);
+}
+
 app.use(express.json({ limit: '2mb' }));
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'event-checkin-secret-2026',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   // 'auto': cookie chỉ đặt secure khi kết nối là HTTPS (nhờ trust proxy đọc X-Forwarded-Proto).

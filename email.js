@@ -2,12 +2,16 @@
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
 const db = require('./db');
+const secret = require('./lib/secret');
 
 // Địa chỉ công khai của website (cần cho ảnh trong email khi gửi qua Brevo)
 const BASE_URL = (process.env.BASE_URL || '').replace(/\/$/, '');
 
 async function getSettings() {
-  return db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
+  const s = await db.prepare('SELECT * FROM smtp_settings WHERE id = 1').get();
+  if (!s) return s;
+  // smtp_pass/brevo_api_key lưu mã hoá trong DB (xem lib/secret.js) - giải mã khi dùng thật.
+  return { ...s, smtp_pass: secret.decrypt(s.smtp_pass), brevo_api_key: secret.decrypt(s.brevo_api_key) };
 }
 
 async function getTransport() {

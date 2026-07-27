@@ -7,9 +7,13 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const knex = require('knex')(require('./knexfile'));
 
+// DB_SOCKET_PATH (VD /cloudsql/project:region:instance) -> kết nối qua Unix socket, dùng khi
+// chạy Cloud Run + Cloud SQL (cách kết nối chuẩn của Google, không cần lộ IP). Không đặt biến
+// này thì kết nối TCP qua host/port như cũ - không đổi hành vi mặc định.
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: Number(process.env.DB_PORT) || 3307,
+  ...(process.env.DB_SOCKET_PATH
+    ? { socketPath: process.env.DB_SOCKET_PATH }
+    : { host: process.env.DB_HOST || '127.0.0.1', port: Number(process.env.DB_PORT) || 3307 }),
   user: process.env.DB_USER || 'checkin',
   password: process.env.DB_PASSWORD || 'checkinpw',
   database: process.env.DB_NAME || 'checkin',

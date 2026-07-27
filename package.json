@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server.js",
+    "migrate": "knex migrate:latest",
+    "migrate:make": "knex migrate:make",
+    "migrate:status": "knex migrate:status"
   },
   "keywords": [],
   "author": "",

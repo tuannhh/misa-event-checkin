@@ -457,12 +457,47 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       mặc định có `view_report` (kể cả "Nhân viên check-in"/"Lễ tân") - backend CŨ cho phép họ
       gọi thẳng `/report` API dù FE luôn ẩn tab Báo cáo với 2 vai trò này; nay chặn đúng ở
       backend luôn, không dựa vào FE ẩn để "coi như an toàn" nữa.
-    - **Việc CHƯA làm (còn lại của Đợt 2)**: (a) FE admin `web/src/views/tabs/StaffTab.vue`
-      vẫn gửi `staff_type` cũ khi gán nhân viên (BE tự quy đổi qua `legacyStaffType`/
-      `getLegacyRoleIdMap`, chưa có UI tick quyền/chọn nhóm chức năng thật); (b) màn hình quản
-      lý nhóm chức năng (CRUD + ma trận tick) - API đã có, UI chưa làm; (c) app mobile `/app`
-      cho nhân viên hiện trường (mục 4 kế hoạch nâng cấp) - CHƯA bắt đầu; (d) `print_badge`
-      chưa có gate thật ở backend, chỉ mới là quyền hiển thị.
+    - **Việc CHƯA làm lúc đó**: FE admin StaffTab, màn quản lý nhóm chức năng, app mobile,
+      `print_badge` chưa gate thật - xem tiếp mục 20 (đã làm xong phần FE cùng ngày).
+20. **Đợt 2 (Phân quyền tick-chọn) — PHẦN FRONTEND HOÀN THÀNH (2026-07-27)** - vẫn nhánh
+    `backend-refactor-d1`, commit `7399ad4`, verify TRÊN TRÌNH DUYỆT THẬT qua Vite dev server +
+    backend + MySQL/Redis thật (Playwright-style qua Browser tool, không chỉ đọc code).
+    - `api.js`: bỏ `STAFF_TYPE_NAMES`/`defaultStaffTab` (dựa staff_type cứng), thêm
+      `can(ev,code)`, `needsOnsite(ev)`, `staffTabsFor(ev)` - suy danh sách tab từ
+      `ev.my_permissions` (mảng quyền BE trả, xem mục 19) thay vì so sánh chuỗi staff_type ở
+      nhiều file như trước.
+    - **`StaffTab.vue` viết lại**: dropdown 4 staff_type cứng → chọn **nhóm chức năng**
+      (`role_id`, load qua `GET /staff-roles?event_id=`) + dialog "🧩 Nhóm chức năng" (CRUD đầy
+      đủ qua `GET /permissions` + `POST/PUT/DELETE /staff-roles`) - **tạo nhóm mới ngay trên UI,
+      không cần sửa code**. Đã test qua UI thật: tạo nhóm "Tu van" (tick Ghi chú + Xem báo cáo)
+      → gán cho nhân viên → login thấy đúng 2 mục.
+    - **App mobile-first cho nhân viên hiện trường** (mục 4 kế hoạch nâng cấp): `App.vue` dùng
+      shell riêng cho `role==='checkin'` - cột nội dung **cố định 480px, CĂN GIỮA BẤT KỂ viewport
+      thật rộng bao nhiêu** (đã verify: viewport 1280px nhưng `.field-shell` đo được đúng 480px)
+      → chế độ "Desktop site" của Chrome Android (bỏ qua `<meta viewport>`) không còn phá được
+      layout - đúng nguyên nhân gốc của việc chủ dự án phản ánh "để giao diện desktop thì PWA
+      không hoạt động". `EventDetailView.vue` thay `MTabs` ngang bằng **bottom nav cố định tối đa
+      5 mục** (MTabs không cuộn ngang được, vỡ khi nhiều tab/màn hẹp).
+    - **Bẫy công cụ test đáng nhớ**: click theo `ref` (từ `read_page`/`find`) luôn đúng toạ độ
+      thật; nhưng **click bằng `coordinate` thủ công lấy từ ảnh zoom hoặc từ toạ độ báo lại của
+      1 lần click ref trước đó sẽ SAI** vì `coordinate` phải theo không gian pixel của
+      `screenshot` (800x450 ở đây), không phải theo viewport thật (1280x720) hay ảnh zoom. Cũng
+      phát hiện: click vào checkbox `MCheckbox` (input `sr-only` ẩn dưới label) qua `computer
+      left_click` với `ref` không luôn kích hoạt được (click "trúng" toạ độ nhưng không toggle) -
+      dùng `form_input` (set value trực tiếp) mới đáng tin cậy cho loại control này.
+    - **Bug tìm thấy + đã sửa qua test thật**: tải lại trang khi URL đang trỏ 1 tab không còn hợp
+      lệ với quyền hiện tại (VD đổi nhóm chức năng rồi F5 lại đúng tab cũ, hoặc mở từ bookmark/PWA
+      icon cũ) → màn hình trắng (`activeComponent` null vì lấy tab từ URL không kiểm tra còn hợp
+      lệ không). Sửa: `activeTab` getter validate `props.tab` có nằm trong `tabs.value` hiện tại
+      không, không hợp lệ thì tự về tab đầu tiên hợp lệ.
+    - **Việc CHƯA làm (còn lại của Đợt 2 + hoãn có chủ đích sang Đợt 5)**: icon vẫn là emoji
+      (chuẩn hoá MDS toàn bộ - icon/token/box-shadow - thuộc Đợt 5, không làm ở đây để tránh sơn
+      lại 2 lần); `ScanTab`/`ReportTab` chưa tối ưu riêng mobile (bảng nhiều cột - cũng Đợt 5);
+      PWA (manifest + service worker) cho app mobile chưa làm; `print_badge` vẫn chưa có endpoint
+      gate thật ở backend (chỉ là quyền hiển thị nút, sẽ gate thật ở Đợt 4 khi làm print job).
+    - **Đợt 2 coi như xong** theo "Xong khi" của kế hoạch: tạo nhóm mới không sửa code (✅ đã
+      test), đổi quyền 1 người có hiệu lực ngay lần load tiếp theo (✅, qua `PUT .../staff/:userId`
+      + F5), ghi chú/tiềm năng luôn vào báo cáo bất kể quyền view_report (✅ đã test ở mục 19).
 
 ---
 

@@ -581,6 +581,37 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       cho phép làm tắt. Cần thảo luận phạm vi cụ thể với chủ dự án trước khi bắt tay
       (làm toàn bộ 1 lượt hay ưu tiên vài màn hình nhiều người dùng nhất - app mobile
       hiện trường - trước).
+24. **Deploy thử nghiệm lên Cloud Run - HOÀN THÀNH (2026-07-27)** - chủ dự án chọn tạo
+    service MỚI riêng để không đụng production. Đã tạo:
+    - Cloud SQL MySQL riêng: instance `misa-checkin-test-mysql` (db-f1-micro,
+      region asia-southeast1, project `prapplication-479309`), database `checkin`.
+    - Cloud Run service **`misa-event-checkin-test`**:
+      https://misa-event-checkin-test-784559735000.asia-southeast1.run.app
+      - Build từ `Dockerfile.internal` (KHÔNG phải `Dockerfile` gốc - đó là bản
+        SQLite/Litestream cũ của nhánh `main`), qua `docker build` + `docker push`
+        thủ công (không dùng `gcloud builds submit -f` vì lệnh không có cờ `-f`).
+      - Kết nối Cloud SQL qua Unix socket (`--add-cloudsql-instances` +
+        `DB_SOCKET_PATH=/cloudsql/<connection-name>`) - xem commit `73f682f` (thêm
+        hỗ trợ `DB_SOCKET_PATH` vào `db.js`/`knexfile.js`, tương thích ngược).
+      - `--min-instances=1 --max-instances=1 --no-cpu-throttling` (chưa cấu hình Redis
+        cho bản test này - MemoryStore/setInterval đủ dùng vì luôn đúng 1 instance).
+      - Tài khoản Super Admin: `admin@test.com` - mật khẩu random đã đưa vào biến môi
+        trường lúc deploy, KHÔNG lưu trong repo/memory (xem trực tiếp bằng
+        `gcloud run services describe misa-event-checkin-test --region asia-southeast1`
+        rồi giải mã biến `ADMIN_PASSWORD`, hoặc đơn giản hơn là deploy revision mới
+        với mật khẩu mới nếu quên).
+    - Đã verify TRÊN CLOUD RUN THẬT (không phải giả lập local): đăng nhập, tạo sự
+      kiện, đủ 7 tab, BodyEditor mới (Đợt 3) hoạt động đúng.
+    - **⚠️ Đây là service test, KHÔNG phải production `misa-event-checkin` (vẫn nguyên
+      trên nhánh `main`, không bị đụng tới).** Cloud SQL `misa-checkin-test-mysql`
+      **tốn phí liên tục theo giờ cho tới khi xoá/tắt** - nếu không dùng nữa:
+      `gcloud sql instances delete misa-checkin-test-mysql` và
+      `gcloud run services delete misa-event-checkin-test --region asia-southeast1`.
+    - **Việc còn lại trước khi cân nhắc thay production**: merge `backend-refactor-d1`
+      vào `rewrite-vue-mysql` (chưa merge); xong Đợt 5 phần 2 (chuẩn hoá UI MDS); có
+      kế hoạch di chuyển dữ liệu thật từ bản Cloud Run production cũ (SQLite) sang
+      MySQL nếu quyết định thay hẳn kiến trúc; cấu hình `ENCRYPTION_KEY`/`REDIS_URL`
+      thật nếu lên production chính thức (bản test hiện chưa cấu hình 2 biến này).
 
 ---
 

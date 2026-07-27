@@ -385,6 +385,42 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Quyết định đã chốt (2026-07-27):** (1) làm tiếp trên repo này, phối hợp bằng diff như trên; (2) giữ Express, chỉ chia `routes/api.js` thành module theo nghiệp vụ (không chuyển NestJS); (3) làm cả 2 hướng in — TCP 9100 thẳng qua LAN + Print Agent (.exe) cho máy in USB/sự kiện ngoài văn phòng; (4) quyền "Xem danh sách check-in" có phân phạm vi (all/checked_in/my_booth) và tách riêng quyền `view_pii`; (5) thứ tự triển khai: **Đ1 Nền tảng (migration+module+Redis/worker+phân trang+bảo mật) → Đ2 Quyền tick-chọn+App mobile → Đ3 Email nhóm+sửa editor → Đ4 In LAN+Agent → Đ5 UI MDS+Báo cáo chọn cột**; (6) UI **bắt buộc tuân thủ đầy đủ** quy tắc bắt buộc của MDS 2.0 (icon/token/layout/box-shadow/tự kiểm thử trên trình duyệt thật), không làm tắt; (7) ghi chú booth + khách hàng tiềm năng **bắt buộc luôn xuất hiện trong báo cáo** dù đổi mô hình quyền ở Đ2 — không được làm mất liên kết `booth_visits.note`/`booth_potential_notes` ↔ báo cáo; (8) email theo nhóm khách là **tự động hoàn toàn** — soạn sẵn nội dung theo nhóm 1 lần, hệ thống tự chọn đúng mẫu khi gửi (tay/hàng loạt/tự động), không cần chọn tay ở bước gửi.
     - Kiến trúc chốt: **KHÔNG làm microservice** (dữ liệu quan hệ dày, tách nhỏ sẽ hại) — dùng modular monolith + FE deploy tách riêng + 1 worker riêng (BullMQ) cho việc nặng (email hàng loạt, ZIP badge, in).
     - 5 task đã tạo trong TaskCreate theo đúng 5 đợt trên để theo dõi qua nhiều phiên. Chi tiết đầy đủ + bảng câu hỏi/quyết định (Q1-Q8) ở mục 10 file kế hoạch.
+18. **Đợt 1 (Nền tảng backend) HOÀN THÀNH (2026-07-27)** — nhánh `backend-refactor-d1` (tách
+    từ `rewrite-vue-mysql`, **CHƯA merge**), 5 commit, mỗi phần đều verify bằng Docker thật
+    (không chỉ đọc code):
+    - **Bảo mật** (`df608c3`): bỏ mật khẩu Super Admin hard-code trong `db.js` → đọc từ
+      `ADMIN_EMAIL`/`ADMIN_PASSWORD` (bắt buộc, fail-fast nếu thiếu lúc DB rỗng); `SESSION_SECRET`
+      bắt buộc, bỏ fallback hard-code từng lộ trong git; `lib/secret.js` (mới) mã hoá
+      AES-256-GCM `smtp_pass`/`brevo_api_key` bằng `ENCRYPTION_KEY` (tương thích ngược dữ liệu
+      cũ chưa mã hoá). Thêm `.env.example`, cập nhật `docker-compose.internal.yml`.
+    - **Migration** (`ad9612b`): bật `knex` (đã có sẵn trong deps nhưng chưa dùng) quản lý
+      schema qua `knexfile.js` + `migrations/20250101000000_baseline_schema.js` (baseline, giữ
+      `IF NOT EXISTS` để an toàn cả DB cũ lẫn DB mới). `db.js` không còn tự chạy CREATE TABLE,
+      chỉ gọi `knex.migrate.latest()`. Query nghiệp vụ trong `routes/` KHÔNG đổi (vẫn dùng
+      `db.prepare()` qua pool mysql2 thuần, không viết lại bằng knex query builder).
+    - **Module hoá** (`eebb011`): chia `routes/api.js` (1128 dòng) thành `routes/{auth,users,
+      events,attendees,checkin,monitor,badges,email,reports,options}.js` + `routes/lib/
+      {helpers,badges}.js` (hằng số + middleware phân quyền dùng chung). Không đổi path/hành
+      vi API nào. `routes/index.js` gộp lại, mount ở `server.js` qua `require('./routes')`.
+    - **Redis/BullMQ** (`cfce573`): session chuyển sang Redis (`connect-redis` + gói `redis`,
+      **không phải ioredis** — 2 package khác nhau, đã tự phát hiện lỗi "ERR syntax error" qua
+      log thật khi thử ioredis rồi sửa đúng). `lib/redis.js` dùng ioredis riêng cho BullMQ.
+      Scheduler email cảm ơn (`email.js`) chuyển từ `setInterval` sang BullMQ repeatable job khi
+      có `REDIS_URL` — sửa đúng bug "gửi email cảm ơn trùng khi chạy >1 instance". Không có
+      `REDIS_URL` vẫn chạy được (dev/demo 1 instance) kèm cảnh báo rõ. Thêm service `redis` vào
+      `docker-compose.internal.yml`. **Đã verify chạy 2 container app riêng biệt cùng 1 Redis,
+      đăng nhập ở container 1 dùng được ngay ở container 2** — xác nhận đúng bug đã sửa.
+    - **Phân trang** (`8a6269f`): `GET /events/:id/attendees` và `GET /events/:id/report` nhận
+      `?page&page_size&q(&status&importance&position&company_size)` chạy LIMIT/OFFSET thật
+      trong SQL. Không truyền `page` → giữ NGUYÊN 100% hành vi/response cũ (tương thích ngược
+      với frontend hiện tại, chưa đổi gì ở FE) — FE sẽ chuyển sang dùng phân trang ở Đợt 5.
+    - **Việc treo mới phát sinh**: (a) nhánh `backend-refactor-d1` cần merge về `rewrite-vue-mysql`
+      sau khi chủ dự án duyệt; (b) mật khẩu Super Admin/session/encryption cũ trên các bản đang
+      chạy (Cloud Run `main`, VM `misa-checkin-test`) KHÔNG bị ảnh hưởng — chỉ nhánh này thay đổi,
+      cần kế hoạch chuyển đổi riêng khi lên production thật; (c) `docker-compose.internal.yml` giờ
+      cần thêm service Redis khi deploy — cập nhật `DEPLOY-NOI-BO.md` sau (đang lỗi thời từ trước).
+    - Đợt 1 KHÔNG đổi bất kỳ dòng frontend nào (`web/`) — toàn bộ thay đổi chỉ ở backend, đúng
+      tinh thần "gọn theo module, dễ diff" đã chốt với chủ dự án (mục 0.1 file kế hoạch).
 
 ---
 

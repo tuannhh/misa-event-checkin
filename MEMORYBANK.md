@@ -271,7 +271,16 @@ Giải pháp phát thẻ cứng cho khách tại quầy **không cần máy in t
 
 ## 6. Frontend — kiến trúc & UI
 
-### Routing & hàm nền tảng (public/app.js)
+> **Frontend đang dùng thật (từ nhánh `rewrite-vue-mysql`/`backend-refactor-d1`) là
+> `web/src` (Vue 3 + Vite + Tailwind + MDS)**, KHÔNG phải `public/app.js` mô tả ngay
+> dưới đây — phần đó là bản vanilla JS cũ, giữ lại làm fallback/tham khảo, chưa xoá.
+> Sửa UI thật thì sửa trong `web/src/` (routing qua `vue-router` hash mode: `router.js`
+> có `/events`, `/event/:id/:tab`, `/members`, `/smtp`; component MDS ở
+> `web/src/components/mds/`, icon dùng chung ở `icons.js` qua `MIcon.vue`). App Shell
+> (header `MHeaderBar` + sidebar `MSidebar` + dialog Thiết lập `MSettingsDialog`) nằm ở
+> `App.vue` — xem chi tiết mục 9 entry 25 (Đợt 5 phần 2).
+
+### Routing & hàm nền tảng (public/app.js — bản cũ, xem ghi chú trên)
 - Hash-based: `#/events`, `#/event/:id/:tab`, `#/members`, `#/smtp`.
 - `api()` — gọi backend, tự parse JSON + throw lỗi. `esc()` — **bắt buộc** escape khi nội dung user/DB gắn vào innerHTML (chống XSS). `el(html)` — dựng DOM từ HTML string qua `<template>`, **bắt buộc dùng cho `<tr>`** vì `innerHTML` trực tiếp lên table sẽ phá cấu trúc bảng. `fmtDate(iso, isUtc)` / `todayYMD()` / `eventDayStatus(ev)` — xử lý ngày giờ (DB lưu UTC, hiển thị giờ Việt Nam `Asia/Ho_Chi_Minh`).
 - Email 2 chế độ soạn: `isHtmlBody()`, `htmlToPlain()`, `plainToHtml()`, `wireBodyEditors()` — tab 📝 Văn bản ↔ `</>` HTML, tự convert 2 chiều.
@@ -612,6 +621,59 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       kế hoạch di chuyển dữ liệu thật từ bản Cloud Run production cũ (SQLite) sang
       MySQL nếu quyết định thay hẳn kiến trúc; cấu hình `ENCRYPTION_KEY`/`REDIS_URL`
       thật nếu lên production chính thức (bản test hiện chưa cấu hình 2 biến này).
+
+25. **Đợt 5 (phần 2/2 - Chuẩn hoá UI theo MDS 2.0) HOÀN THÀNH (2026-07-28)** - nhánh
+    `backend-refactor-d1`. Làm sau khi chủ dự án phản hồi trực tiếp bằng ảnh chụp UI
+    thật (không phải chỉ đọc yêu cầu ban đầu) - 2 vòng góp ý:
+    - **Xoá toàn bộ emoji trong `web/src`** (~150 chỗ, 20 file: mọi view/tab + toolbar
+      rich-text `BodyEditor.vue`), thay bằng icon Tabler qua `MIcon.vue` + `icons.js`
+      (bảng icon dùng chung, tách ra từ `MSidebar.vue` để không khai báo trùng). Đổi
+      luôn vài checkbox/input thô (`<input type="checkbox">`) sang `MCheckbox` ở bảng
+      Người tham dự/Nhân viên/Quét QR.
+    - **App Shell chuẩn MDS (header 48px + sidebar 200/64px)**: trước đây `App.vue` tự
+      chế `<header>` (logo + vài link ngang), không dùng `MHeaderBar`/`MSidebar` sẵn có.
+      Nay `MHeaderBar` full cụm tiện ích đúng thứ tự **Thiết lập → AVA → Chat → Thông
+      báo → Hỗ trợ → More → avatar** + app switcher 9 chấm bắt buộc. Icon AVA/Chat copy
+      **nguyên bản** từ `misa-design-system` skill (`MHeaderIconAva.vue`/
+      `MHeaderIconChat.vue` - gradient mascot + bong bóng chat khoét lỗ evenodd), không
+      tự vẽ lại (đúng cảnh báo trong `header-bar.md` mục 3c).
+    - **Sidebar trái DUY NHẤT** của app hiển thị đúng 7 tab tính năng của sự kiện đang
+      mở (Người tham dự/Quét QR/Booth/Phôi thẻ/Email/Báo cáo/Nhân viên) làm nội dung
+      chính - trước đó các tab này bị lồng thành 1 sidebar phụ (`MVerticalTabs`, đã
+      xoá) bên trong `EventDetailView.vue`, khiến sidebar chính chỉ còn 3 mục
+      Sự kiện/Thành viên/Cấu hình Email tách biệt (chủ dự án phản hồi là "giấu tính
+      năng đi"). Cầu nối 2 chiều qua `eventSidebar` (reactive, `api.js`):
+      `EventDetailView.vue` đẩy `items/activeKey/onSelect` lên khi mount, `App.vue`
+      đọc để render `MSidebar`; tắt (`active=false`) khi rời trang.
+    - **Thành viên + Cấu hình Email gộp vào dialog "Thiết lập chung"** (nút bánh răng
+      header) theo đúng yêu cầu - `MSettingsDialog.vue` (copy từ skill, giữ 3 tab gốc
+      Màu sắc/Hiển thị/Hình nền) được thêm 2 tab quản trị nhúng lại `MembersView.vue`/
+      `SmtpView.vue` (tự lưu theo hành động, không qua nút Lưu chung của dialog).
+    - **Nạp đủ 10 theme màu + Gradient** (`web/src/tokens/themes/*.css`, trước chỉ có
+      1 theme `blue`) + `space-compact.css`/`space-comfortable.css`. Tiện thể sửa 2 bug
+      phát hiện khi đối chiếu file token cũ với bản gốc trong skill: (1) các biến alias
+      `--mds-text-brand`/`--mds-icon-brand`/`--mds-bg-brand-brand*`... trong
+      `tokens/blue.css` cũ để nguyên placeholder chưa resolve `{Brand.600}` (giờ dùng
+      bản token đúng từ skill); (2) `theme-state.js` gốc trong skill set sai thuộc
+      tính `data-density` khi CSS thật dùng selector `[data-mds-space="..."]` - đã sửa
+      lại đúng khi copy vào project.
+    - Gọn lại `page-head` của `EventDetailView.vue`: bỏ breadcrumb "← Tất cả sự kiện" +
+      tên sự kiện lặp lại (đã có sẵn ở header dạng company-name, bấm vào quay lại danh
+      sách) - chỉ giữ dòng meta thời gian/đơn vị, tránh cảm giác "lơ lửng" chủ dự án
+      phản hồi khi phần này không nằm trong card mà cũng không khớp cụm thông tin nào.
+    - Đã tự bấm/hover/tạo sự kiện/chuyển tab/mở dialog Thiết lập trên trình duyệt thật
+      (đăng nhập, tạo sự kiện, chuyển đủ 7 tab qua sidebar chính, mở đủ 5 tab dialog
+      Thiết lập, đổi theme) - không chỉ đọc code, đúng yêu cầu bắt buộc của skill.
+    - **CHƯA LÀM / hạn chế còn biết**: (1) tab "Thành viên" trong Thiết lập có nút mở
+      dialog con "+ Thêm thành viên" → 2 lớp `MDialog` chồng nhau khi đang mở Thiết
+      lập (MDS cấm chồng dialog) - cách sửa đúng là chuyển cả `MSettingsDialog` sang
+      dạng Drawer full-width trượt từ mép trên theo đúng spec gốc (`header-bar.md` mục
+      3b) thay vì `MDialog` giữa màn hình, chưa làm vì quy mô lớn hơn; (2) ô "Thời gian
+      tổ chức" ở dialog tạo/sửa sự kiện vẫn là `<input type="datetime-local">` gốc
+      trình duyệt (chỉ style lại CSS) - MDS chưa có control ngày+giờ kết hợp sẵn; (3)
+      chưa rà lại từng màn hình theo `data-table.md` (mật độ dòng bảng, resize cột...)
+      - chỉ sửa những gì thấy sai khi chủ dự án chỉ ra qua ảnh chụp, không phải rà toàn
+      bộ 15 màn hình theo checklist đầy đủ.
 
 ---
 

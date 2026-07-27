@@ -561,6 +561,26 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       hay 50x50 (theo code hiện tại) - đã nêu ở kế hoạch mục 5, chưa có câu trả lời.
     - **Chưa làm**: in phôi thẻ (badge) qua trạm - hiện chỉ hỗ trợ tem QR khách, phôi
       thẻ vẫn theo luồng ZIP gửi nhà in như cũ (không đổi, không cần đổi).
+23. **Đợt 5 (phần 1/2 - Báo cáo chọn cột) HOÀN THÀNH (2026-07-27)** - nhánh
+    `backend-refactor-d1`, commit `306c6c5`. Mục 7 kế hoạch nâng cấp:
+    - `routes/reports.js`: `REPORT_COLUMNS` (20 cột, dùng chung cho danh mục + xuất),
+      `GET /events/:id/report/columns` tự ẩn cột PII (email/SĐT) nếu không có quyền
+      `view_pii`. `GET /report/export` nhận `?columns=a,b,c` (không truyền = xuất đủ,
+      tương thích ngược) + **sửa đúng bug cũ**: link xuất giờ áp đúng bộ lọc
+      q/trạng thái/mức độ/chức vụ/quy mô đang xem trên màn hình (trước đây chỉ
+      truyền `min_booths`, bỏ qua mọi filter khác - dễ xuất nhầm cả danh sách).
+    - FE: dialog "☑ Chọn cột" ở `ReportTab.vue`, nhớ theo từng sự kiện (localStorage).
+      Đã verify trên trình duyệt thật: bỏ tick Email+SĐT → link xuất đúng còn 19 cột.
+    - **PHẦN CÒN LẠI CỦA ĐỢT 5 (2/2) - "Chuẩn hoá UI theo MDS 2.0" - CHƯA LÀM**,
+      cố ý dừng lại ở đây thay vì làm ẩu: đây là việc thay TOÀN BỘ icon emoji bằng
+      `MIcon`/Tabler, đồng bộ lại bộ 33 component + token MDS mới nhất, làm lại
+      khung layout (header 48px/sidebar/box-shadow chuẩn...) cho khoảng 15 màn hình -
+      quy mô lớn, mang tính thiết kế trực quan cần con người xem bằng mắt để duyệt,
+      khác hẳn bản chất kỹ thuật thuần của Đợt 1-4. Skill `misa-design-system` cũng
+      yêu cầu tự bấm/hover/đổi theme thật trên trình duyệt trước khi báo xong, không
+      cho phép làm tắt. Cần thảo luận phạm vi cụ thể với chủ dự án trước khi bắt tay
+      (làm toàn bộ 1 lượt hay ưu tiên vài màn hình nhiều người dùng nhất - app mobile
+      hiện trường - trước).
 
 ---
 

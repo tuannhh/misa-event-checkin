@@ -87,38 +87,75 @@ router.get('/events/:id/report', requireLogin, async (req, res) => {
   res.json(resBody);
 });
 
+// Định nghĩa TOÀN BỘ cột có thể xuất - dùng chung cho API liệt kê cột (FE dựng bảng tick chọn)
+// và khi thực xuất Excel. Cột nào đánh dấu `pii` sẽ tự ẩn khi người xuất không có quyền
+// view_pii (mục 7 kế hoạch nâng cấp - phần "chọn cột" + không hở PII ngoài ý muốn).
+const REPORT_COLUMNS = [
+  { key: 'salutation', label: 'Xưng hô', width: 8, get: (r) => r.salutation },
+  { key: 'name', label: 'Họ và tên', width: 25, get: (r) => r.name },
+  { key: 'email', label: 'Email', width: 28, pii: true, get: (r) => r.email },
+  { key: 'phone', label: 'Số điện thoại', width: 14, pii: true, get: (r) => r.phone },
+  { key: 'position', label: 'Chức vụ', width: 16, get: (r) => r.position },
+  { key: 'importance', label: 'Mức độ quan trọng', width: 15, get: (r) => r.importance },
+  { key: 'company', label: 'Nơi công tác/Tên công ty', width: 30, get: (r) => r.company },
+  { key: 'tax_code', label: 'MST công ty', width: 13, get: (r) => r.tax_code },
+  { key: 'company_size', label: 'Quy mô nhân sự', width: 26, get: (r) => r.company_size },
+  { key: 'group_name', label: 'Nhóm khách', width: 18, get: (r) => r.group_name || '' },
+  { key: 'eligible', label: 'Đủ điều kiện', width: 11, get: (r, ev) => (isEligible(r, ev) ? 'Có' : 'Không') },
+  { key: 'checked_in', label: 'Đã check-in', width: 11, get: (r) => (r.checked_in_at ? 'Có' : 'Không') },
+  { key: 'checked_in_at', label: 'Thời gian check-in', width: 19, get: (r) => (r.checked_in_at ? fmtVN(r.checked_in_at) : '') },
+  { key: 'checked_in_by', label: 'Nhân viên check-in', width: 20, get: (r) => r.checked_in_by_name || '' },
+  { key: 'booth_visits', label: 'Booth đã ghé', width: 45, get: (r) => r.booth_visits.map(v => `${v.name} (${fmtVN(v.visited_at)})`).join('; ') },
+  { key: 'booth_count', label: 'Số booth đã ghé', width: 12, get: (r) => r.booth_visits.length },
+  { key: 'booth_notes', label: 'Ghi chú giám sát (theo booth)', width: 50, get: (r) => r.booth_visits.filter(v => v.note).map(v => `${v.name}: ${v.note}`).join(' | ') },
+  { key: 'potential', label: 'Khách hàng tiềm năng', width: 15, get: (r) => (r.potential_notes.some(n => n.is_potential) ? 'Có' : 'Không') },
+  { key: 'potential_notes', label: 'Ghi chú tiềm năng (giám sát)', width: 50, get: (r) => r.potential_notes.filter(n => n.note).map(n => `${n.name}: ${n.note}`).join(' | ') },
+  { key: 'walkin', label: 'Khách vãng lai', width: 13, get: (r) => (r.is_walkin ? 'Có' : '') },
+  { key: 'confirm_email_sent', label: 'Đã gửi email xác nhận', width: 20, get: (r) => (r.confirm_email_sent_at ? 'Có' : 'Không') },
+];
+
+// Danh mục cột cho FE dựng bảng tick chọn - loại bỏ cột PII nếu người xem không có quyền.
+router.get('/events/:id/report/columns', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  const asg = await requireReportPerm(req, res, ev); if (asg === undefined) return;
+  const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
+  res.json(REPORT_COLUMNS.filter(c => !c.pii || !maskPii).map(c => ({ key: c.key, label: c.label, pii: !!c.pii })));
+});
+
 router.get('/events/:id/report/export', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   const asg = await requireReportPerm(req, res, ev); if (asg === undefined) return;
   const maskPii = req.user.role === 'checkin' && !hasPerm(asg, 'view_pii');
+
+  // Áp ĐÚNG bộ lọc đang xem trên màn hình (bug cũ: link xuất chỉ truyền min_booths, bỏ qua
+  // q/trạng thái/mức độ/chức vụ/quy mô đang lọc trên UI - mục 7 kế hoạch nâng cấp).
+  let where = 'a.event_id = ?'; const params = [ev.id];
+  const q = String(req.query.q || '').trim();
+  if (q) { where += ' AND (a.name LIKE ? OR a.phone LIKE ? OR a.company LIKE ? OR a.email LIKE ?)'; const like = `%${q}%`; params.push(like, like, like, like); }
+  if (req.query.status === 'checked_in') where += ' AND a.checked_in_at IS NOT NULL';
+  else if (req.query.status === 'not_checked_in') where += ' AND a.checked_in_at IS NULL';
+  if (req.query.importance) { where += ' AND a.importance = ?'; params.push(req.query.importance); }
+  if (req.query.position) { where += ' AND a.position = ?'; params.push(req.query.position); }
+  if (req.query.company_size) { where += ' AND a.company_size = ?'; params.push(req.query.company_size); }
+
   let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name, g.name AS group_name FROM attendees a
     LEFT JOIN users u ON u.id = a.checked_in_by LEFT JOIN attendee_groups g ON g.id = a.group_id
-    WHERE a.event_id = ? ORDER BY a.id`).all(ev.id);
+    WHERE ${where} ORDER BY a.id`).all(...params);
   rows = await attachBoothVisits(ev.id, rows);
   rows = (await attachPotentialNotes(ev.id, rows)).map(maskPiiRow(maskPii));
   // Lọc theo ngưỡng số booth tối thiểu đã ghé - dùng cho xuất danh sách đủ điều kiện quay số lucky draw.
   // Ngưỡng gõ mỗi lần trên UI, KHÔNG lưu cấu hình cố định theo sự kiện (mỗi sự kiện số booth khác nhau).
   const minBooths = Number(req.query.min_booths) || 0;
   if (minBooths > 0) rows = rows.filter(r => r.booth_visits.length >= minBooths);
-  const data = rows.map(r => ({
-    'Xưng hô': r.salutation, 'Họ và tên': r.name, 'Email': r.email, 'Số điện thoại': r.phone,
-    'Chức vụ': r.position, 'Mức độ quan trọng': r.importance,
-    'Nơi công tác/Tên công ty': r.company, 'MST công ty': r.tax_code, 'Quy mô nhân sự': r.company_size,
-    'Nhóm khách': r.group_name || '',
-    'Đủ điều kiện': isEligible(r, ev) ? 'Có' : 'Không',
-    'Đã check-in': r.checked_in_at ? 'Có' : 'Không',
-    'Thời gian check-in': r.checked_in_at ? fmtVN(r.checked_in_at) : '',
-    'Nhân viên check-in': r.checked_in_by_name || '',
-    'Booth đã ghé': r.booth_visits.map(v => `${v.name} (${fmtVN(v.visited_at)})`).join('; '),
-    'Số booth đã ghé': r.booth_visits.length,
-    'Ghi chú giám sát (theo booth)': r.booth_visits.filter(v => v.note).map(v => `${v.name}: ${v.note}`).join(' | '),
-    'Khách hàng tiềm năng': r.potential_notes.some(n => n.is_potential) ? 'Có' : 'Không',
-    'Ghi chú tiềm năng (giám sát)': r.potential_notes.filter(n => n.note).map(n => `${n.name}: ${n.note}`).join(' | '),
-    'Khách vãng lai': r.is_walkin ? 'Có' : '',
-    'Đã gửi email xác nhận': r.confirm_email_sent_at ? 'Có' : 'Không',
-  }));
+
+  // Chọn cột (mục 7) - ?columns=name,phone,... ; không truyền -> xuất ĐỦ (tương thích ngược
+  // với link cũ). Luôn bỏ cột PII nếu không có quyền, kể cả khi client cố tình yêu cầu.
+  const requested = req.query.columns ? String(req.query.columns).split(',') : REPORT_COLUMNS.map(c => c.key);
+  const columns = REPORT_COLUMNS.filter(c => requested.includes(c.key) && !(c.pii && maskPii));
+
+  const data = rows.map((r) => Object.fromEntries(columns.map(c => [c.label, c.get(r, ev)])));
   const ws = XLSX.utils.json_to_sheet(data);
-  ws['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 15 }, { wch: 30 }, { wch: 13 }, { wch: 26 }, { wch: 18 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 20 }, { wch: 45 }, { wch: 12 }, { wch: 50 }, { wch: 15 }, { wch: 50 }, { wch: 13 }, { wch: 20 }];
+  ws['!cols'] = columns.map(c => ({ wch: c.width }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'BaoCao');
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

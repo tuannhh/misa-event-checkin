@@ -8,6 +8,7 @@ import MInput from '../../components/mds/MInput.vue';
 import MSelect from '../../components/mds/MSelect.vue';
 import MTag from '../../components/mds/MTag.vue';
 import MDialog from '../../components/mds/MDialog.vue';
+import MCheckbox from '../../components/mds/MCheckbox.vue';
 import AttendeeFields from '../../components/AttendeeFields.vue';
 
 const props = defineProps({ ev: Object });
@@ -22,8 +23,38 @@ const canManage = computed(() => props.ev.can_manage);
 async function load() { d.value = await api(`/events/${props.ev.id}/report`); }
 onMounted(load);
 
-const exportUrl = computed(() => `/api/events/${props.ev.id}/report/export`);
-const luckyExportUrl = computed(() => `/api/events/${props.ev.id}/report/export?min_booths=${Number(minBooths.value) || 0}`);
+// Chọn cột xuất Excel (mục 7 kế hoạch nâng cấp) - nhớ theo từng sự kiện trên máy này.
+const COLS_KEY = 'reportColumns-' + props.ev.id;
+const allColumns = ref([]); // [{key,label,pii}] - danh mục lấy từ server (đã ẩn sẵn cột PII nếu không có quyền)
+const selectedCols = ref([]);
+const colsDlgOpen = ref(false);
+async function loadColumns() {
+  allColumns.value = await api(`/events/${props.ev.id}/report/columns`);
+  const saved = JSON.parse(localStorage.getItem(COLS_KEY) || 'null');
+  selectedCols.value = saved ? saved.filter(k => allColumns.value.some(c => c.key === k)) : allColumns.value.map(c => c.key);
+}
+onMounted(loadColumns);
+function selectAllCols() { selectedCols.value = allColumns.value.map(c => c.key); }
+function saveColumns() {
+  localStorage.setItem(COLS_KEY, JSON.stringify(selectedCols.value));
+  colsDlgOpen.value = false;
+  toast.success('Đã lưu lựa chọn cột xuất Excel');
+}
+
+// Xuất ĐÚNG bộ lọc + cột đang chọn trên màn hình (bug cũ: xuất luôn toàn bộ, bỏ qua bộ lọc).
+function buildExportUrl(withLuckyThreshold) {
+  const params = new URLSearchParams();
+  if (q.value) params.set('q', q.value);
+  if (fStatus.value) params.set('status', fStatus.value === 'in' ? 'checked_in' : 'not_checked_in');
+  if (fImp.value) params.set('importance', fImp.value);
+  if (fPos.value) params.set('position', fPos.value);
+  if (fSize.value) params.set('company_size', fSize.value);
+  if (withLuckyThreshold) params.set('min_booths', String(Number(minBooths.value) || 0));
+  if (selectedCols.value.length) params.set('columns', selectedCols.value.join(','));
+  return `/api/events/${props.ev.id}/report/export?${params.toString()}`;
+}
+const exportUrl = computed(() => buildExportUrl(false));
+const luckyExportUrl = computed(() => buildExportUrl(true));
 const opt = (arr, allLabel) => [{ value: '', label: allLabel }, ...(arr || []).map(v => ({ value: v, label: v }))];
 const pct = (n, dd) => (dd ? Math.round(n / dd * 100) : 0);
 
@@ -73,7 +104,8 @@ async function save() {
       <div class="toolbar-select"><MSelect v-model="fImp" :options="opt(d.importances, 'Tất cả mức độ')" /></div>
       <div class="toolbar-select"><MSelect v-model="fPos" :options="opt(d.positions, 'Tất cả chức vụ')" /></div>
       <div class="toolbar-select"><MSelect v-model="fSize" :options="opt(d.company_sizes, 'Tất cả quy mô')" /></div>
-      <a class="lnk-btn" :href="exportUrl" download>⬇ Xuất Excel</a>
+      <MButton variant="secondary" @click="colsDlgOpen = true">☑ Chọn cột</MButton>
+      <a class="lnk-btn" :href="exportUrl" download>⬇ Xuất Excel ({{ selectedCols.length }} cột)</a>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.rows.length }}</b> người</div>
 
@@ -140,6 +172,17 @@ async function save() {
     <MDialog v-model="dlgOpen" type="confirm" confirm-text="Lưu" :title="editing ? 'Sửa: ' + editing.name : 'Sửa'" :width="560" @confirm="save">
       <AttendeeFields :form="form" />
     </MDialog>
+
+    <MDialog v-model="colsDlgOpen" title="Chọn cột xuất Excel" :width="480">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span class="muted">Đã chọn {{ selectedCols.length }} / {{ allColumns.length }} cột</span>
+        <MButton variant="secondary" size="md" @click="selectAllCols">Chọn tất cả</MButton>
+      </div>
+      <div class="cols-list">
+        <MCheckbox v-for="c in allColumns" :key="c.key" v-model="selectedCols" :value="c.key" :label="c.label" />
+      </div>
+      <MButton variant="primary" style="margin-top:16px" @click="saveColumns">💾 Lưu lựa chọn</MButton>
+    </MDialog>
   </div>
 </template>
 
@@ -157,4 +200,6 @@ h3 { font-size: 16px; font-weight: 700; margin: 0; }
 .lnk-btn { display: inline-flex; align-items: center; padding: 0 14px; height: 32px; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; color: #374151; text-decoration: none; font-weight: 600; font-size: 13px; }
 .lnk-btn:hover { background: var(--app-bg); }
 .lnk-btn.dis { opacity: .5; pointer-events: none; }
+.cols-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 360px; overflow-y: auto; }
+@media (max-width: 480px) { .cols-list { grid-template-columns: 1fr; } }
 </style>

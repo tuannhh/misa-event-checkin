@@ -32,7 +32,7 @@ app.use(session({
   cookie: { maxAge: 12 * 60 * 60 * 1000, secure: 'auto' }, // đăng nhập giữ 12 tiếng
 }));
 
-app.use('/api', require('./routes/api'));
+app.use('/api', require('./routes'));
 app.use('/uploads', express.static(UPLOAD_DIR));
 // Ưu tiên bản Vue đã build (public-vue) nếu có; ngược lại dùng bản cũ (public)
 const VUE_DIST = path.join(__dirname, 'public-vue');

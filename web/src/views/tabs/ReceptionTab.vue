@@ -35,7 +35,7 @@ async function saveWalkin() {
   try {
     const r = await api(`/events/${props.ev.id}/walkin`, { method: 'POST', body: { ...form, booth_id: null } });
     dlgOpen.value = false; toast.success('Đã thêm & check-in khách vãng lai');
-    printQr({ id: r.id, name: form.name, company: form.company });
+    printQr({ id: r.id, name: form.name, company: form.company }, props.ev.id);
     load();
   } catch (e) { toast.error(e.message); }
 }
@@ -61,7 +61,7 @@ async function saveWalkin() {
           <td style="white-space:nowrap;text-align:right">
             <span class="cell-actions" style="justify-content:flex-end">
               <MButton v-if="!r.checked_in_at" variant="primary" size="md" @click="checkin(r)">Check-in</MButton>
-              <MButton variant="secondary" size="md" @click="printQr(r)">🖨 In QR</MButton>
+              <MButton variant="secondary" size="md" @click="printQr(r, props.ev.id)">🖨 In QR</MButton>
             </span>
           </td>
         </tr>

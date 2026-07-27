@@ -1,9 +1,27 @@
-// In tem QR dự phòng (máy in nhiệt USB) khổ vuông 50×50mm.
-// Tem chứa mã QR của chính khách -> quét thẳng ở booth, không cần gán.
-export function printQr(r) {
+import { api } from '../api';
+
+// In tem QR khách - mục 5 kế hoạch nâng cấp. Có trạm in đã chọn (tab Phôi thẻ > Trạm in) thì
+// gửi lệnh in thẳng qua máy chủ (LAN/Agent, không cần Chrome); không có thì lùi về cách cũ
+// (mở tab trình duyệt in qua @page 50x50mm, cần máy in USB nối trực tiếp máy đang mở web).
+export async function printQr(r, eventId) {
+  const stationId = eventId ? localStorage.getItem('printStation-' + eventId) : null;
+  if (eventId && stationId) {
+    try {
+      const res = await api(`/events/${eventId}/print`, { method: 'POST', body: { station_id: Number(stationId), attendee_id: r.id } });
+      if (res.status === 'pending') alert('Đã gửi lệnh in - trạm Agent sẽ in trong giây lát.');
+      return;
+    } catch (e) {
+      alert('In qua trạm thất bại (' + e.message + ') - chuyển sang in qua trình duyệt.');
+    }
+  }
+  printQrViaBrowser(r);
+}
+
+function printQrViaBrowser(r) {
   const line = r.company ? `${r.name} - ${r.company}` : r.name;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const w = window.open('', '_blank');
+  if (!w) { alert('Trình duyệt đã chặn cửa sổ in (popup). Cho phép popup cho trang này rồi thử lại.'); return; }
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tem QR</title>
     <style>
       @page { size: 50mm 50mm; margin: 0; }
@@ -17,7 +35,7 @@ export function printQr(r) {
     </style></head>
     <body>
       <div class="label">
-        <img src="/api/attendees/${r.id}/qr.png" onload="setTimeout(()=>{window.print();},250)">
+        <img src="/api/attendees/${r.id}/qr.png" onload="setTimeout(()=>{window.print();window.close();},250)">
         <div class="nm">${esc(line)}</div>
       </div>
     </body></html>`);

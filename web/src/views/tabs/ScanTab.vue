@@ -133,7 +133,7 @@ async function saveWalkin() {
           <div v-if="att.email"><span>Email</span><b>{{ att.email }}</b></div>
         </div>
         <MButton v-if="result.status === 'valid'" variant="primary" style="margin-top:14px;width:100%" @click="confirmCheckin">✅ XÁC NHẬN CHECK-IN</MButton>
-        <MButton v-if="att && !atBooth" variant="secondary" style="margin-top:10px;width:100%" @click="printQr(att)">🖨 In thẻ QR cho khách</MButton>
+        <MButton v-if="att && !atBooth" variant="secondary" style="margin-top:10px;width:100%" @click="printQr(att, props.ev.id)">🖨 In thẻ QR cho khách</MButton>
       </template>
       <div v-else class="r-idle">
         <div style="font-size:44px">{{ atBooth ? '🧭' : '📷' }}</div>

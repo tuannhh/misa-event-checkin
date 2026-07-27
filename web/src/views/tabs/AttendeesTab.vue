@@ -163,7 +163,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
     <div v-if="qrRow" style="text-align:center">
       <img :src="`/api/attendees/${qrRow.id}/qr.png`" style="width:240px" />
       <div style="font-family:monospace;font-size:12px;color:#6b7280;margin-top:6px">{{ qrRow.qr_token }}</div>
-      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow)">🖨 In tem QR (50×50mm)</MButton>
+      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow, props.ev.id)">🖨 In tem QR (50×50mm)</MButton>
     </div>
   </MDialog>
 </template>

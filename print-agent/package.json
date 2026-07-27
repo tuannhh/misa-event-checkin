@@ -1,0 +1,18 @@
+{
+  "name": "misa-checkin-print-agent",
+  "version": "1.0.0",
+  "description": "Print Agent cho MISA Event Check-in - in tem QR từ điện thoại không cần Chrome/máy tính trung gian",
+  "main": "agent.js",
+  "bin": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "build": "pkg . --targets node18-win-x64 --output dist/misa-checkin-print-agent.exe"
+  },
+  "pkg": {
+    "targets": ["node18-win-x64"],
+    "outputPath": "dist"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

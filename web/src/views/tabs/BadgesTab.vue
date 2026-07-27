@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { api } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import MButton from '../../components/mds/MButton.vue';
@@ -16,6 +16,42 @@ const fStatus = ref('');
 
 async function load() { d.value = await api(`/events/${props.ev.id}/badges`); }
 onMounted(load);
+
+/* ============ Trạm in (mục 5 kế hoạch nâng cấp) - in tem QR từ điện thoại qua LAN hoặc
+   Print Agent, không cần Chrome + máy tính trung gian như trước. ============ */
+const stations = ref([]);
+const stForm = reactive({ name: '', kind: 'lan', host: '', port: 9100 });
+async function loadStations() { stations.value = await api(`/events/${props.ev.id}/print-stations`); }
+onMounted(loadStations);
+
+async function addStation() {
+  if (!stForm.name.trim()) { toast.warning('Cần nhập tên trạm in'); return; }
+  if (stForm.kind === 'lan' && !stForm.host.trim()) { toast.warning('Trạm in LAN cần nhập IP máy in'); return; }
+  try {
+    const r = await api(`/events/${props.ev.id}/print-stations`, { method: 'POST', body: { ...stForm } });
+    Object.assign(stForm, { name: '', host: '', port: 9100 });
+    loadStations();
+    if (stForm.kind === 'agent') alert(`Đã tạo trạm in "Agent". Mã ghép nối: ${r.pairing_code}\nNhập mã này khi chạy chương trình Print Agent trên máy tính (xem print-agent/README.md).`);
+  } catch (e) { toast.error(e.message); }
+}
+async function delStation(s) {
+  if (!confirm(`Xoá trạm in "${s.name}"?`)) return;
+  try { await api(`/print-stations/${s.id}`, { method: 'DELETE' }); loadStations(); }
+  catch (e) { toast.error(e.message); }
+}
+
+// Trạm in đang dùng để in tem QR khách (nút 🖨 ở các tab Quét QR/Lễ tân/Báo cáo) - nhớ theo
+// từng sự kiện trên máy này (giống cách nhớ vị trí quét), xem lib/print.js.
+const activeStationId = ref(localStorage.getItem('printStation-' + props.ev.id) || '');
+function setActiveStation(id) {
+  activeStationId.value = String(id);
+  localStorage.setItem('printStation-' + props.ev.id, String(id));
+  toast.success('Đã đặt làm trạm in mặc định cho sự kiện này');
+}
+function clearActiveStation() {
+  activeStationId.value = '';
+  localStorage.removeItem('printStation-' + props.ev.id);
+}
 
 const exportUrl = computed(() => `/api/events/${props.ev.id}/badges/export`);
 const filtered = computed(() => (d.value?.rows || []).filter(b => {
@@ -87,6 +123,50 @@ async function setStatus(b, status) {
           <tr v-if="!filtered.length"><td colspan="4" class="muted" style="padding:20px;text-align:center">Chưa có phôi thẻ nào. Bấm "+ Sinh phôi".</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Trạm in - in tem QR khách từ điện thoại, không cần Chrome/máy tính trung gian -->
+    <div class="card" style="margin-top:16px">
+      <h3>🖨 Trạm in (in từ điện thoại)</h3>
+      <p class="muted" style="margin:6px 0 14px">
+        <b>LAN</b>: máy in có địa chỉ IP riêng, máy chủ gửi thẳng lệnh in qua mạng.
+        <b>Agent</b>: chạy chương trình nhỏ trên 1 máy tính (xem <code>print-agent/README.md</code>) - dùng khi máy in là USB hoặc mạng máy in không thông với máy chủ.
+      </p>
+      <div class="toolbar" style="align-items:flex-start">
+        <div style="width:180px"><MInput v-model="stForm.name" placeholder="Tên trạm in" /></div>
+        <div style="width:140px"><MSelect v-model="stForm.kind" :options="[{ value: 'lan', label: 'LAN (IP máy in)' }, { value: 'agent', label: 'Agent (chương trình)' }]" /></div>
+        <template v-if="stForm.kind === 'lan'">
+          <div style="width:160px"><MInput v-model="stForm.host" placeholder="IP máy in" /></div>
+          <div style="width:100px"><MInput v-model="stForm.port" type="number" placeholder="Cổng" /></div>
+        </template>
+        <MButton variant="primary" @click="addStation">+ Thêm trạm in</MButton>
+      </div>
+      <div v-if="stations.length" class="card" style="padding:0;overflow-x:auto;margin-top:12px">
+        <table class="tbl">
+          <thead><tr><th>Tên</th><th>Kiểu</th><th>Địa chỉ / Mã ghép nối</th><th>Lần cuối hoạt động</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="s in stations" :key="s.id">
+              <td><b>{{ s.name }}</b></td>
+              <td><MTag :color="s.kind === 'lan' ? 'info' : 'brand'" size="sm">{{ s.kind === 'lan' ? 'LAN' : 'Agent' }}</MTag></td>
+              <td>
+                <span v-if="s.kind === 'lan'" style="font-family:monospace">{{ s.host }}:{{ s.port }}</span>
+                <span v-else style="font-family:monospace">{{ s.pairing_code }}</span>
+                <span v-if="s.printer_name" class="muted"> · {{ s.printer_name }}</span>
+              </td>
+              <td class="muted">{{ s.last_seen_at || 'Chưa kết nối lần nào' }}</td>
+              <td style="text-align:right;white-space:nowrap">
+                <MTag v-if="String(activeStationId) === String(s.id)" color="success" size="sm" style="margin-right:8px">Đang dùng</MTag>
+                <MButton v-else variant="secondary" size="md" @click="setActiveStation(s.id)">Dùng trạm này</MButton>
+                <MButton variant="danger" size="md" @click="delStation(s)">Xoá</MButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="muted">Chưa có trạm in nào - nút "🖨 In tem" ở các tab khác sẽ in qua trình duyệt như cũ.</p>
+      <p v-if="activeStationId" class="muted" style="margin-top:8px">
+        Đang in qua trạm đã chọn ở trên. <a href="#" @click.prevent="clearActiveStation">Ngừng dùng, quay lại in qua trình duyệt</a>.
+      </p>
     </div>
   </div>
 </template>

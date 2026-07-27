@@ -128,7 +128,7 @@ async function save() {
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
               <span class="cell-actions" style="justify-content:flex-end">
                 <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
-                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r)">🖨</MButton>
+                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r, props.ev.id)">🖨</MButton>
               </span>
             </td>
           </tr>

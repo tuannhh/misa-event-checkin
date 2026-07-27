@@ -498,6 +498,42 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Đợt 2 coi như xong** theo "Xong khi" của kế hoạch: tạo nhóm mới không sửa code (✅ đã
       test), đổi quyền 1 người có hiệu lực ngay lần load tiếp theo (✅, qua `PUT .../staff/:userId`
       + F5), ghi chú/tiềm năng luôn vào báo cáo bất kể quyền view_report (✅ đã test ở mục 19).
+21. **Đợt 3 (Email nhóm khách + sửa trình soạn thảo + chọn nhà cung cấp) HOÀN THÀNH
+    (2026-07-27)** - vẫn nhánh `backend-refactor-d1`, commit `ab81bf7`, verify qua
+    `email-preview` thật (không chỉ đọc code) + build Vite sạch.
+    - **Nhóm khách** (mục 6): bảng `attendee_groups`, `attendees.group_id`,
+      `email_group_templates`/`email_group_images` (mẫu email RIÊNG theo nhóm+loại
+      confirm/thank) - thiết kế CỘNG THÊM, không đổi `email_settings`/`email_images` cũ:
+      nhóm không soạn mẫu riêng thì tự lùi về mặc định của sự kiện, hành vi cũ giữ
+      nguyên 100% khi chưa tạo nhóm nào. `email.js: resolveGroupOverride()` - `buildEmail()`
+      tự tra `attendee.group_id` và chọn đúng mẫu, **người dùng không cần chọn tay ở
+      bước gửi** (đã xác nhận với chủ dự án: tự động hoàn toàn). Đã test qua
+      `/email-preview` thật: khách không nhóm ra đúng mặc định, khách nhóm VIP ra đúng
+      nội dung+tiêu đề riêng.
+    - `routes/attendee-groups.js` (mới): CRUD nhóm + mẫu email riêng + ảnh riêng.
+      Import Excel có cột "Nhóm khách" (tự tạo nhóm nếu chưa có). Báo cáo thêm cột
+      "Nhóm khách". UI: card "👥 Nhóm khách" trong `EmailTab.vue` + dialog soạn mẫu
+      riêng (đổi tab Xác nhận/Cảm ơn bằng `MTabs`).
+    - **Bẫy kỹ thuật mới**: migration lỗi "Referencing column ... incompatible" khi
+      tạo FK `attendee_groups.event_id -> events.id` vì viết `.unsigned()` theo thói
+      quen copy từ migration Đợt 2 (nơi FK trỏ bảng tự tạo bằng `increments()` - vốn
+      unsigned) - nhưng `events.id` là `INT` **signed** (tạo bằng SQL thô ở baseline).
+      Quy tắc: FK phải khớp CHÍNH XÁC kiểu cột đích, không suy luận từ migration khác.
+    - **Mục 8 (chọn nhà cung cấp email)**: `smtp_settings.provider` (`brevo`/`gmail`/
+      `manual`) chọn TƯỜNG MINH bằng radio ở `SmtpView.vue`, không còn suy đoán ngầm
+      "có brevo_api_key thì dùng Brevo" như cũ. Migration tự backfill provider theo
+      dữ liệu cấu hình sẵn có để KHÔNG đổi hành vi gửi email đang chạy.
+    - **`BodyEditor.vue` viết lại hoàn toàn** (mục 6b) - sửa dứt điểm 4 lỗi mất nội dung
+      khi chuyển tab Văn bản↔HTML: giờ chỉ có **1 nguồn sự thật là chuỗi HTML**, tab
+      "Văn bản" là WYSIWYG thật (`contenteditable` + toolbar Đậm/Nghiêng/Gạch chân/
+      căn trái-giữa-phải-đều/danh sách/liên kết dùng `document.execCommand`), tab HTML
+      xem thẳng đúng chuỗi đó - **không còn bước chuyển đổi nào nên không thể mất định
+      dạng**. Đã verify trên trình duyệt thật: gõ + in đậm ở tab Văn bản → tab HTML
+      hiện đúng `<b>...</b>`, chuyển qua lại nhiều lần không đổi. `lib/emailBody.js` xoá
+      các hàm `isHtmlBody/htmlToPlain/plainToHtml` cũ (nguồn gây lỗi), chỉ giữ `SUGGEST`.
+    - **Chưa làm**: cảnh báo "rời trang khi có thay đổi chưa lưu" ở `EmailTab.vue`
+      (`EventDetailView.vue` vẫn remount component khi đổi tab chính, mất bản nháp
+      chưa lưu - biết là còn thiếu, ưu tiên thấp hơn lỗi chuyển tab con đã sửa dứt điểm).
 
 ---
 

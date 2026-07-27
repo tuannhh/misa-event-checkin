@@ -534,6 +534,33 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - **Chưa làm**: cảnh báo "rời trang khi có thay đổi chưa lưu" ở `EmailTab.vue`
       (`EventDetailView.vue` vẫn remount component khi đổi tab chính, mất bản nháp
       chưa lưu - biết là còn thiếu, ưu tiên thấp hơn lỗi chuyển tab con đã sửa dứt điểm).
+22. **Đợt 4 (In từ điện thoại - trạm LAN + Print Agent) HOÀN THÀNH (2026-07-27)** - vẫn
+    nhánh `backend-refactor-d1`, commit `cc6363e`. Đã chốt làm cả 2 hướng in (Q3).
+    - `print_stations` (LAN có IP máy in trực tiếp, hoặc Agent ghép nối bằng
+      `pairing_code`) + `print_jobs` (hàng đợi, trạng thái pending/done/failed).
+    - `lib/tspl.js` dựng lệnh TSPL (chuẩn phổ biến máy in tem nhiệt) cho tem QR 50x50mm;
+      `lib/printSender.js` gửi thẳng qua TCP cổng 9100 (RAW/JetDirect) - **đã test THẬT**
+      bằng 1 TCP server giả lập đóng vai máy in: bấm nút in trên UI thật → server nhận
+      đúng lệnh TSPL (QR token+tên+công ty). `routes/print.js`: CRUD trạm in + API
+      ghép nối/poll/báo kết quả cho Agent (không cần đăng nhập - xác thực bằng
+      pairing_code vì agent chạy trên máy riêng). Quyền `print_badge` (chỉ là cờ hiển
+      thị từ Đợt 2) **lần đầu có gate thật ở backend**.
+    - `print-agent/` - chương trình Node độc lập, đóng gói `.exe` bằng `pkg` (xem
+      `print-agent/README.md`): hỏi địa chỉ máy chủ + mã ghép nối + máy in (LAN hoặc
+      USB đã Sharing trong Windows) lúc chạy lần đầu, sau đó tự poll việc in mỗi 3s.
+      Đã test API ghép nối/poll/báo kết quả qua curl (đúng hợp đồng dữ liệu).
+      **CHƯA test được với máy in vật lý thật hay build .exe thật** (môi trường không
+      có phần cứng/máy Windows) - cần chủ dự án tự thử với máy in PD304 thật + báo lại.
+    - FE: `BadgesTab.vue` thêm card "🖨 Trạm in" (thêm/xoá, chọn trạm mặc định theo
+      sự kiện, xem mã ghép nối). `lib/print.js`: `printQr()` tự gửi qua trạm đã chọn
+      (localStorage `printStation-<eventId>`) nếu có, lùi về in qua trình duyệt như
+      cũ nếu chưa cấu hình - đã cập nhật 4 nơi gọi (Reception/Scan/Report/Attendees).
+      Tiện sửa luôn 2 lỗi nhỏ đã biết ở bản in qua trình duyệt (không bắt popup bị
+      chặn, không tự đóng tab sau in).
+    - **Còn treo cần chủ dự án quyết định**: khổ tem thật 50x30 (theo `CLAUDE.md` cũ)
+      hay 50x50 (theo code hiện tại) - đã nêu ở kế hoạch mục 5, chưa có câu trả lời.
+    - **Chưa làm**: in phôi thẻ (badge) qua trạm - hiện chỉ hỗ trợ tem QR khách, phôi
+      thẻ vẫn theo luồng ZIP gửi nhà in như cũ (không đổi, không cần đổi).
 
 ---
 

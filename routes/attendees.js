@@ -14,25 +14,49 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ============ NGƯỜI THAM DỰ ============
+// Có ?page= -> phân trang + lọc THẬT SỰ ở phía server (LIMIT/OFFSET trong SQL), dùng cho sự
+// kiện nhiều nghìn khách. KHÔNG có ?page= -> giữ NGUYÊN hành vi cũ (trả mảng đầy đủ), để
+// tương thích ngược với bản frontend hiện tại (sẽ chuyển sang dùng phân trang ở đợt làm UI).
 router.get('/events/:id/attendees', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
-  let rows = await db.prepare(`
-    SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-    LEFT JOIN users u ON u.id = a.checked_in_by
-    WHERE a.event_id = ? ORDER BY a.id DESC`).all(ev.id);
+
+  let staffType = null;
   if (req.user.role === 'checkin') {
     const asg = await getAssignment(req.user, ev.id);
-    const type = asg ? asg.staff_type : 'checkin';
-    if (type === 'reception') {
-      // Lễ tân in QR: xem TOÀN BỘ khách
-    } else if (type === 'supervisor' || type === 'manager') {
-      rows = [];
-    } else if (req.query.all !== '1') {
-      rows = rows.filter(r => r.checked_in_at);
-    }
-  } else {
-    rows = rows.filter(r => !r.is_walkin);
+    staffType = asg ? asg.staff_type : 'checkin';
+    if (staffType === 'supervisor' || staffType === 'manager') return res.json([]); // chỉ được xem, không có danh sách khách
   }
+
+  let where = 'a.event_id = ?'; const params = [ev.id];
+  if (req.user.role === 'checkin') {
+    if (staffType !== 'reception' && req.query.all !== '1') where += ' AND a.checked_in_at IS NOT NULL';
+  } else {
+    where += ' AND a.is_walkin = 0';
+  }
+  const q = String(req.query.q || '').trim();
+  if (q) {
+    where += ' AND (a.name LIKE ? OR a.phone LIKE ? OR a.company LIKE ? OR a.email LIKE ?)';
+    const like = `%${q}%`; params.push(like, like, like, like);
+  }
+
+  const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : null;
+  if (page) {
+    const pageSize = Math.min(200, Math.max(10, Number(req.query.page_size) || 50));
+    const total = (await db.prepare(`SELECT COUNT(*) AS c FROM attendees a WHERE ${where}`).get(...params)).c;
+    const rows = await db.prepare(`
+      SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by
+      WHERE ${where} ORDER BY a.id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`).all(...params);
+    return res.json({
+      rows: rows.map(r => ({ ...r, eligible: isEligible(r, ev) })),
+      total, page, page_size: pageSize,
+    });
+  }
+
+  const rows = await db.prepare(`
+    SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+    LEFT JOIN users u ON u.id = a.checked_in_by
+    WHERE ${where} ORDER BY a.id DESC`).all(...params);
   res.json(rows.map(r => ({ ...r, eligible: isEligible(r, ev) })));
 });
 

@@ -33,20 +33,50 @@ async function blockViewOnlyReport(req, res, ev) {
   return false;
 }
 
+// Có ?page= -> lọc + phân trang THẬT SỰ ở phía server (LIMIT/OFFSET), cho sự kiện nhiều
+// nghìn khách mở tab Báo cáo không bị tải hết về trình duyệt. KHÔNG có ?page= -> giữ NGUYÊN
+// hành vi cũ (trả toàn bộ rows, không áp filter server) để tương thích ngược với frontend
+// hiện tại - filter hiện đang làm ở client (ReportTab.vue); sẽ chuyển sang dùng phân trang
+// khi làm lại UI (Đợt 5). Số liệu tổng quan (total/checkedin/walkin) LUÔN tính trên toàn bộ
+// khách của sự kiện, không bị ảnh hưởng bởi tìm kiếm/trang - đúng ý nghĩa "tổng quan sự kiện".
 router.get('/events/:id/report', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;
   if (await blockViewOnlyReport(req, res, ev)) return;
-  let rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
-    LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
-  rows = await attachBoothVisits(ev.id, rows);
-  rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
-  const total = rows.length;
-  const checkedin = rows.filter(r => r.checked_in_at).length;
-  const walkin = rows.filter(r => r.is_walkin).length;
+
+  const total = (await db.prepare('SELECT COUNT(*) AS c FROM attendees WHERE event_id = ?').get(ev.id)).c;
+  const checkedin = (await db.prepare('SELECT COUNT(*) AS c FROM attendees WHERE event_id = ? AND checked_in_at IS NOT NULL').get(ev.id)).c;
+  const walkin = (await db.prepare('SELECT COUNT(*) AS c FROM attendees WHERE event_id = ? AND is_walkin = 1').get(ev.id)).c;
   const booths = await db.prepare(`SELECT b.id, b.name, COUNT(v.id) AS visit_count FROM booths b
     LEFT JOIN booth_visits v ON v.booth_id = b.id WHERE b.event_id = ? GROUP BY b.id ORDER BY b.sort, b.id`).all(ev.id);
-  res.json({ total, checkedin, walkin, not_checkedin: total - checkedin, rows, booths,
-    positions: POSITIONS, company_sizes: COMPANY_SIZES, importances: IMPORTANCES });
+
+  let where = 'a.event_id = ?'; const params = [ev.id];
+  const q = String(req.query.q || '').trim();
+  if (q) { where += ' AND (a.name LIKE ? OR a.phone LIKE ? OR a.company LIKE ? OR a.email LIKE ?)'; const like = `%${q}%`; params.push(like, like, like, like); }
+  if (req.query.status === 'checked_in') where += ' AND a.checked_in_at IS NOT NULL';
+  else if (req.query.status === 'not_checked_in') where += ' AND a.checked_in_at IS NULL';
+  if (req.query.importance) { where += ' AND a.importance = ?'; params.push(req.query.importance); }
+  if (req.query.position) { where += ' AND a.position = ?'; params.push(req.query.position); }
+  if (req.query.company_size) { where += ' AND a.company_size = ?'; params.push(req.query.company_size); }
+
+  const page = req.query.page ? Math.max(1, Number(req.query.page) || 1) : null;
+  const resBody = { total, checkedin, walkin, not_checkedin: total - checkedin, booths,
+    positions: POSITIONS, company_sizes: COMPANY_SIZES, importances: IMPORTANCES };
+
+  let rows;
+  if (page) {
+    const pageSize = Math.min(200, Math.max(10, Number(req.query.page_size) || 50));
+    resBody.total_filtered = (await db.prepare(`SELECT COUNT(*) AS c FROM attendees a WHERE ${where}`).get(...params)).c;
+    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by WHERE ${where}
+      ORDER BY a.checked_in_at DESC, a.id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`).all(...params);
+    resBody.page = page; resBody.page_size = pageSize;
+  } else {
+    rows = await db.prepare(`SELECT a.*, u.name AS checked_in_by_name FROM attendees a
+      LEFT JOIN users u ON u.id = a.checked_in_by WHERE a.event_id = ? ORDER BY a.checked_in_at DESC, a.id`).all(ev.id);
+  }
+  rows = await attachBoothVisits(ev.id, rows);
+  resBody.rows = (await attachPotentialNotes(ev.id, rows)).map(r => ({ ...r, eligible: isEligible(r, ev) }));
+  res.json(resBody);
 });
 
 router.get('/events/:id/report/export', requireLogin, async (req, res) => {

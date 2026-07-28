@@ -835,6 +835,32 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       THẬT sau deploy: đăng nhập `admin@test.com`, migration mới (`badge_layout`) tự
       chạy không lỗi, dropdown avatar/Đăng xuất hoạt động đúng.
 
+30. **Merge `backend-refactor-d1` vào `main` + xoá Cloud Run production cũ
+    (2026-07-28)** - chủ dự án quyết định "dùng bản mới luôn". Trước khi merge đã
+    kiểm tra `git merge-base main backend-refactor-d1` = đúng tip hiện tại của
+    `main` (0 commit lệch) → **fast-forward hoàn toàn, không xung đột, không mất
+    commit nào** (khác lo ngại ban đầu về 2 kiến trúc SQLite/MySQL xung đột - thực
+    ra `main` chỉ đơn giản là ĐANG Ở PHÍA SAU, chưa từng rẽ nhánh riêng).
+    - `git checkout main && git merge --ff-only backend-refactor-d1 && git push
+      origin main` - `main` giờ = `backend-refactor-d1` (commit `0ce08de`), xoá hẳn
+      `routes/api.js` cũ, có đủ MySQL/knex/Vue3/quyền tick-chọn/in thẻ/rà soát UI.
+    - **Đã hỏi lại phạm vi trước khi động vào hạ tầng thật** (đúng quy tắc "xác nhận
+      trước hành động khó đảo ngược ảnh hưởng hệ thống chung"): chủ dự án xác nhận
+      dùng luôn `misa-event-checkin-test` làm bản chính thức (không đổi tên service,
+      giữ nguyên URL `-test`), **xoá hẳn Cloud Run `misa-event-checkin` cũ (SQLite/
+      Litestream)** để đỡ tốn kém + tránh nhầm 2 bản chạy song song - xác nhận rõ
+      dữ liệu chỉ là demo, không cần di chuyển gì.
+    - Đã chạy `gcloud run services delete misa-event-checkin --region
+      asia-southeast1` - xoá thành công, xác nhận lại `gcloud run services list`
+      chỉ còn `misa-event-checkin-test`. **Bucket GCS
+      `gs://prapplication-479309-checkin-db/checkin.db`** (Litestream backup của
+      bản cũ) **CHƯA xoá** - vẫn còn tồn tại, tốn phí lưu trữ không đáng kể, hỏi lại
+      chủ dự án nếu muốn dọn nốt (xem mục 10).
+    - Viết lại gần như toàn bộ `CLAUDE.md` (mục "Tổng quan kỹ thuật", "Cấu trúc
+      file", "Trạng thái hiện tại") vì bản cũ mô tả kiến trúc SQLite/Litestream/
+      `public/app.js` đã không còn đúng - dễ làm AI phiên sau hiểu sai nếu không sửa
+      ngay lúc merge xong.
+
 ---
 
 ## 10. Công việc đang mở / cần theo dõi
@@ -843,6 +869,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [ ] `print-agent/dist/misa-checkin-print-agent.exe` đã build thử (2026-07-28, mục 28) nhưng CHƯA test với Windows/máy in vật lý thật — chờ chủ dự án tự chạy + báo lại. Cỡ chữ/QR trong `lib/tspl.js` (font token/cell size) cũng mới là ước lượng, có thể cần chỉnh lại theo máy in thật.
+- [ ] Bucket GCS `gs://prapplication-479309-checkin-db/checkin.db` (Litestream backup của Cloud Run production cũ, đã xoá service ở mục 30) vẫn còn tồn tại, chưa xoá — hỏi chủ dự án có muốn dọn nốt không (`gsutil rm -r gs://prapplication-479309-checkin-db`), phí lưu trữ không đáng kể nên không gấp.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
 - [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
 - [x] ~~Deploy GCE VM~~ → đã triển khai (2026-07-08/09), https://34-87-20-119.sslip.io, xem mục 15.4. Đang chạy 24/7 — nhớ dừng VM (`gcloud compute instances stop`) khi ngừng test để khỏi tốn phí.

@@ -326,7 +326,8 @@ tem hầu như không hỗ trợ. Không nên coi là hướng chính.
    thái `pending/printing/done/failed`, số lần thử).
 2. API: `POST /events/:id/print` (đặt lệnh), `GET /print-stations` (chọn trạm), SSE cho agent.
 3. Sinh nội dung tem dạng lệnh máy in (TSPL) thay vì HTML — chuẩn, sắc nét, đúng khổ.
-   **Chốt lại khổ tem**: `CLAUDE.md:53` ghi 50×30mm, còn code (`web/src/lib/print.js:9`) là 50×50mm.
+   **Đã chốt (2026-07-28): khổ 100×75mm (A7)**, thiết kế theo mẫu chủ dự án cung cấp
+   (QR + tên + chức danh + công ty + mức độ quan trọng) — xem MEMORYBANK mục 27.
 4. Viết Print Agent (Node + `pkg`, hoặc .NET single-file nếu MISA IT thích ký số hơn).
 5. UI mobile: chọn trạm in một lần rồi nhớ luôn; nút In hiện trạng thái "Đang in… / Đã in / Lỗi".
 6. Sửa các lỗi in hiện tại: `print.js:6` không bắt trường hợp bị chặn popup (im lặng không báo),

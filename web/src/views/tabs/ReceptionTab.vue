@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { api, fmtDate } from '../../api';
+import { api, fmtDate, badgeLayout } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import { printQr } from '../../lib/print';
 import MButton from '../../components/mds/MButton.vue';
@@ -36,7 +36,7 @@ async function saveWalkin() {
   try {
     const r = await api(`/events/${props.ev.id}/walkin`, { method: 'POST', body: { ...form, booth_id: null } });
     dlgOpen.value = false; toast.success('Đã thêm & check-in khách vãng lai');
-    printQr({ id: r.id, name: form.name, company: form.company }, props.ev.id);
+    printQr({ id: r.id, name: form.name, position: form.position, company: form.company, importance: form.importance }, props.ev.id, badgeLayout(props.ev));
     load();
   } catch (e) { toast.error(e.message); }
 }
@@ -62,11 +62,11 @@ async function saveWalkin() {
           <td style="white-space:nowrap;text-align:right">
             <span class="cell-actions" style="justify-content:flex-end">
               <MButton v-if="!r.checked_in_at" variant="primary" size="md" @click="checkin(r)">Check-in</MButton>
-              <MButton variant="secondary" size="md" @click="printQr(r, props.ev.id)"><MIcon name="printer" /> In QR</MButton>
+              <MButton variant="secondary" size="md" @click="printQr(r, props.ev.id, badgeLayout(props.ev))"><MIcon name="printer" /> In QR</MButton>
             </span>
           </td>
         </tr>
-        <tr v-if="!filtered.length"><td colspan="5" class="muted" style="padding:20px;text-align:center">Không có khách phù hợp.</td></tr>
+        <tr v-if="!filtered.length"><td colspan="5" class="muted" style="padding:20px;text-align:center">{{ rows.length ? 'Không tìm thấy khách phù hợp với "' + q + '".' : 'Chưa có khách nào đăng ký.' }}</td></tr>
       </tbody>
     </table>
   </div>

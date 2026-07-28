@@ -81,6 +81,16 @@ router.put('/events/:id', requireLogin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Cấu hình mẫu thẻ in (tem QR khách, khổ 100x75mm - xem lib/tspl.js) riêng cho sự kiện này -
+// màn "Tuỳ chỉnh mẫu thẻ" ở tab Phôi thẻ. Lưu JSON thô vào events.badge_layout, không validate
+// sâu từng trường (chỉ FE tự sinh ra, không phải form nhập tay của người ngoài).
+router.put('/events/:id/badge-layout', requireLogin, async (req, res) => {
+  const ev = await getEventOr404(req, res); if (!ev) return;
+  if (!canManageEvent(req.user, ev)) return res.status(403).json({ error: 'Bạn không có quyền' });
+  await db.prepare('UPDATE events SET badge_layout = ? WHERE id = ?').run(JSON.stringify(req.body || {}), ev.id);
+  res.json({ ok: true });
+});
+
 // ============ BOOTH ============
 router.post('/events/:id/booths', requireLogin, async (req, res) => {
   const ev = await getEventOr404(req, res); if (!ev) return;

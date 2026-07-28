@@ -1,5 +1,15 @@
 <script setup>
 import { computed, watch, onBeforeUnmount } from 'vue'
+import { openStack } from './dialog-stack.js'
+
+// MDS: KHÔNG chồng (stack) nhiều dialog theo chủ trương — nhưng khi 1 dialog
+// (vd Thiết lập) nhúng 1 view có mở dialog con riêng (vd Thêm thành viên),
+// vẫn cần tránh 2 lớp backdrop đè lên nhau. Stack toàn cục (openStack, xem
+// dialog-stack.js — PHẢI nằm ở module .js riêng, không khai báo reactive([])
+// ngay trong <script setup> vì <script setup> chạy lại cho MỖI instance nên
+// sẽ không dùng chung được) để chỉ dialog TRÊN CÙNG hiển thị/nhận phím Esc;
+// dialog bên dưới tự ẩn (không animate, không mất state) cho tới khi dialog
+// con đóng.
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -19,9 +29,12 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
 
-// MDS: KHÔNG chồng (stack) nhiều dialog — luồng nhiều bước dùng Popup.
-// Đếm số dialog đang mở toàn cục để cảnh báo dev khi vi phạm.
+// Đếm số dialog đang mở toàn cục để cảnh báo dev khi vi phạm chủ trương
+// "không chồng dialog" (luồng nhiều bước nên dùng Popup).
 if (!window.__mdsOpenDialogs) window.__mdsOpenDialogs = { count: 0 }
+
+const id = Symbol('mdialog')
+const isTop = computed(() => openStack.length > 0 && openStack[openStack.length - 1] === id)
 
 const widthStyle = computed(() =>
   typeof props.width === 'number' ? `${props.width}px` : props.width
@@ -53,9 +66,15 @@ function onConfirm() {
   close()
 }
 
-// MDS: phím Esc đóng dialog (tương đương Hủy)
+// MDS: phím Esc đóng dialog (tương đương Hủy) — chỉ dialog trên cùng mới xử lý,
+// dialog bị che bên dưới bỏ qua để tránh đóng nhầm cả 2 lớp cùng lúc.
 function onKeydown(e) {
-  if (e.key === 'Escape') onCancel()
+  if (e.key === 'Escape' && isTop.value) onCancel()
+}
+
+function removeFromStack() {
+  const i = openStack.indexOf(id)
+  if (i >= 0) openStack.splice(i, 1)
 }
 
 watch(
@@ -66,13 +85,15 @@ watch(
       if (window.__mdsOpenDialogs.count > 1) {
         console.warn('[MDS] MDialog: không hỗ trợ dialog chồng dialog — dùng Popup cho luồng nhiều bước.')
       }
+      openStack.push(id)
       document.addEventListener('keydown', onKeydown)
       // Khóa scroll nền khi dialog mở
       document.body.style.overflow = 'hidden'
     } else {
       window.__mdsOpenDialogs.count = Math.max(0, window.__mdsOpenDialogs.count - 1)
+      removeFromStack()
       document.removeEventListener('keydown', onKeydown)
-      document.body.style.overflow = ''
+      if (!openStack.length) document.body.style.overflow = ''
     }
   }
 )
@@ -80,7 +101,8 @@ watch(
 onBeforeUnmount(() => {
   if (props.modelValue) {
     window.__mdsOpenDialogs.count = Math.max(0, window.__mdsOpenDialogs.count - 1)
-    document.body.style.overflow = ''
+    removeFromStack()
+    if (!openStack.length) document.body.style.overflow = ''
   }
   document.removeEventListener('keydown', onKeydown)
 })
@@ -89,8 +111,14 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="mds-dialog">
+      <!-- :style thay vì directive v-show: v-show đứng chung v-if trên cùng 1
+      thẻ bị Vue bỏ qua lúc build. Dùng :style để ẩn dialog bị che mà KHÔNG
+      unmount — dialog con (vd Thêm thành viên trong tab Thành viên của dialog
+      Thiết lập) nằm lồng bên trong slot nội dung, unmount cha sẽ unmount
+      luôn con, mất state/đóng nhầm con. -->
       <div
         v-if="modelValue"
+        :style="isTop ? null : { display: 'none' }"
         class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
         role="dialog"
         aria-modal="true"

@@ -1,12 +1,16 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { api } from '../../api';
+import { api, badgeLayout } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
+import { DEFAULT_BADGE_LAYOUT } from '../../lib/print.js';
 import MButton from '../../components/mds/MButton.vue';
 import MInput from '../../components/mds/MInput.vue';
 import MSelect from '../../components/mds/MSelect.vue';
 import MTag from '../../components/mds/MTag.vue';
 import MIcon from '../../components/mds/MIcon.vue';
+import MDialog from '../../components/mds/MDialog.vue';
+import MRadioGroup from '../../components/mds/MRadioGroup.vue';
+import MCheckbox from '../../components/mds/MCheckbox.vue';
 
 const props = defineProps({ ev: Object });
 const toast = useToast();
@@ -54,6 +58,21 @@ function clearActiveStation() {
   localStorage.removeItem('printStation-' + props.ev.id);
 }
 
+/* ============ Tuỳ chỉnh mẫu thẻ (kích thước QR/tên + bật/tắt thông tin hiển thị) ============
+   Lưu theo từng sự kiện ở events.badge_layout (JSON) - dùng chung cho cả in qua trạm (TSPL,
+   xem lib/tspl.js) lẫn in qua trình duyệt (web/src/lib/print.js). */
+const layoutDlgOpen = ref(false);
+const lf = reactive({ ...DEFAULT_BADGE_LAYOUT });
+const SIZE_OPTIONS = [{ label: 'Nhỏ', value: 'sm' }, { label: 'Vừa', value: 'md' }, { label: 'Lớn', value: 'lg' }];
+const QR_MM = { sm: 26, md: 34, lg: 42 };
+const NAME_PX = { sm: 16, md: 20, lg: 24 };
+const previewRow = { salutation: 'Anh', name: 'Nguyễn Văn A', position: 'Giám đốc kinh doanh', company: 'Công ty Cổ phần ABC', importance: 'VIP' };
+function openLayoutDlg() { Object.assign(lf, DEFAULT_BADGE_LAYOUT, badgeLayout(props.ev) || {}); layoutDlgOpen.value = true; }
+async function saveLayout() {
+  try { await api(`/events/${props.ev.id}/badge-layout`, { method: 'PUT', body: { ...lf } }); toast.success('Đã lưu mẫu thẻ'); layoutDlgOpen.value = false; props.ev.badge_layout = JSON.stringify(lf); }
+  catch (e) { toast.error(e.message); }
+}
+
 const exportUrl = computed(() => `/api/events/${props.ev.id}/badges/export`);
 const filtered = computed(() => (d.value?.rows || []).filter(b => {
   const okQ = !q.value || (b.code + ' ' + (b.attendee_name || '')).toLowerCase().includes(q.value.toLowerCase());
@@ -82,15 +101,6 @@ async function setStatus(b, status) {
       (3) Tại sự kiện, lễ tân quét mã khách + mã phôi ở tab <b>Gán thẻ</b> để gán. Thẻ mất → gán thẻ mới + ngừng thẻ cũ.
     </div>
 
-    <div class="card">
-      <h3>Sinh & xuất phôi thẻ</h3>
-      <div class="toolbar" style="margin:12px 0 0">
-        <a class="lnk-btn green" :class="{ dis: !d.total }" :href="exportUrl" download><MIcon name="download" /> Tải ZIP phôi (SVG) gửi nhà in</a>
-        <div style="width:130px"><MInput v-model="count" type="number" placeholder="Số lượng" /></div>
-        <MButton variant="primary" @click="generate">+ Sinh phôi</MButton>
-      </div>
-    </div>
-
     <div class="stats">
       <div class="tile"><div class="n">{{ d.total }}</div><div class="l">Tổng phôi</div></div>
       <div class="tile ok"><div class="n">{{ d.paired }}</div><div class="l">Đã gán khách</div></div>
@@ -101,6 +111,11 @@ async function setStatus(b, status) {
     <div class="toolbar">
       <div style="flex:1;min-width:200px"><MInput v-model="q" placeholder="Tìm mã phôi hoặc tên khách..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
       <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'paired', label: 'Đã gán' }, { value: 'unpaired', label: 'Phôi trắng' }, { value: 'stopped', label: 'Đã ngừng' }]" /></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto">
+        <a class="lnk-btn green" :class="{ dis: !d.total }" :href="exportUrl" download><MIcon name="download" /> Tải ZIP phôi (SVG) gửi nhà in</a>
+        <div style="width:120px"><MInput v-model="count" type="number" placeholder="Số lượng" /></div>
+        <MButton variant="primary" @click="generate">+ Sinh phôi</MButton>
+      </div>
     </div>
     <div class="muted" style="margin-bottom:10px">Hiển thị <b>{{ filtered.length }}</b> / tổng <b>{{ d.total }}</b> phôi</div>
 
@@ -121,7 +136,7 @@ async function setStatus(b, status) {
               <MButton v-else-if="b.attendee_id" variant="danger" size="md" @click="setStatus(b, 'stopped')">Ngừng</MButton>
             </td>
           </tr>
-          <tr v-if="!filtered.length"><td colspan="4" class="muted" style="padding:20px;text-align:center">Chưa có phôi thẻ nào. Bấm "+ Sinh phôi".</td></tr>
+          <tr v-if="!filtered.length"><td colspan="4" class="muted" style="padding:20px;text-align:center">{{ d.total ? 'Không tìm thấy phôi phù hợp, thử xoá bộ lọc/tìm kiếm.' : 'Chưa có phôi thẻ nào. Bấm "+ Sinh phôi".' }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -169,7 +184,45 @@ async function setStatus(b, status) {
         Đang in qua trạm đã chọn ở trên. <a href="#" @click.prevent="clearActiveStation">Ngừng dùng, quay lại in qua trình duyệt</a>.
       </p>
     </div>
+
+    <!-- Mẫu thẻ in (tem QR khách, khổ 100x75mm) - bật/tắt thông tin hiển thị + cỡ chữ/QR -->
+    <div class="card" style="margin-top:16px">
+      <div class="page-head" style="margin-bottom:0">
+        <h3><MIcon name="tag" /> Mẫu thẻ in (tem QR khách)</h3>
+        <MButton variant="secondary" @click="openLayoutDlg"><MIcon name="settings" /> Tuỳ chỉnh mẫu thẻ</MButton>
+      </div>
+      <p class="muted" style="margin-top:6px">Áp dụng cho nút "In thẻ" ở các tab Quét QR/Lễ tân/Người tham dự/Báo cáo - cả in qua trạm lẫn qua trình duyệt.</p>
+    </div>
   </div>
+
+  <MDialog v-model="layoutDlgOpen" type="confirm" confirm-text="Lưu" title="Tuỳ chỉnh mẫu thẻ" :width="640" @confirm="saveLayout">
+    <div class="layout-grid">
+      <div>
+        <label class="fld">Cỡ mã QR</label>
+        <MRadioGroup v-model="lf.qrSize" :options="SIZE_OPTIONS" />
+        <label class="fld" style="margin-top:14px">Cỡ chữ tên khách</label>
+        <MRadioGroup v-model="lf.nameSize" :options="SIZE_OPTIONS" />
+        <label class="fld" style="margin-top:14px">Thông tin hiển thị trên thẻ</label>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <MCheckbox v-model="lf.showPosition" label="Chức danh" />
+          <MCheckbox v-model="lf.showCompany" label="Công ty" />
+          <MCheckbox v-model="lf.showImportance" label="Mức độ quan trọng" />
+        </div>
+      </div>
+      <div class="preview-wrap">
+        <span class="muted" style="font-size:12px">Xem trước (dữ liệu mẫu)</span>
+        <div class="preview-label">
+          <div class="preview-qr" :style="{ width: (QR_MM[lf.qrSize] || 34) + 'px', height: (QR_MM[lf.qrSize] || 34) + 'px' }"></div>
+          <div class="preview-nm" :style="{ fontSize: (NAME_PX[lf.nameSize] || 20) + 'px' }">
+            {{ (previewRow.salutation + ' ' + previewRow.name).toUpperCase() }}
+          </div>
+          <div v-if="lf.showPosition" class="preview-sub">{{ previewRow.position.toUpperCase() }}</div>
+          <div v-if="lf.showCompany" class="preview-sub">{{ previewRow.company.toUpperCase() }}</div>
+          <div v-if="lf.showImportance" class="preview-imp">{{ previewRow.importance.toUpperCase() }}</div>
+        </div>
+      </div>
+    </div>
+  </MDialog>
 </template>
 
 <style scoped>
@@ -187,4 +240,18 @@ h3 { font-size: 16px; font-weight: 700; margin: 0; }
 .lnk-btn { display: inline-flex; align-items: center; padding: 0 14px; height: 32px; border: 1px solid var(--app-border); border-radius: 8px; background: #fff; color: #374151; text-decoration: none; font-weight: 600; font-size: 13px; }
 .lnk-btn.green { background: #16a34a; border-color: #16a34a; color: #fff; }
 .lnk-btn.dis { opacity: .5; pointer-events: none; }
+
+.layout-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 560px) { .layout-grid { grid-template-columns: 1fr; } }
+.preview-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.preview-label {
+  width: 100mm; height: 75mm; max-width: 100%; aspect-ratio: 100 / 75;
+  background: #fff; border: 1px solid var(--app-border); border-radius: 4px;
+  padding: 8px 12px; display: flex; flex-direction: column; align-items: center; text-align: center;
+  font-family: Arial, sans-serif; box-shadow: var(--mds-shadow-card, 0 0 2px 0 rgba(0,0,0,0.10));
+}
+.preview-qr { background: repeating-linear-gradient(45deg, #d1d5db, #d1d5db 3px, #fff 3px, #fff 6px); border: 1px solid #9ca3af; margin: 0 auto 6px; }
+.preview-nm { font-weight: 800; text-transform: uppercase; line-height: 1.15; }
+.preview-sub { font-size: 11px; text-transform: uppercase; color: #374151; margin-top: 2px; }
+.preview-imp { font-weight: 800; font-size: 18px; text-transform: uppercase; margin-top: auto; padding-top: 8px; }
 </style>

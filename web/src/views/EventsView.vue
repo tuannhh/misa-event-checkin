@@ -5,6 +5,7 @@ import { api, auth, fmtDate, eventDayStatus, staffTabsFor, needsOnsite } from '.
 import { useToast } from '../components/mds/toast.js';
 import MButton from '../components/mds/MButton.vue';
 import MDialog from '../components/mds/MDialog.vue';
+import MDatePicker from '../components/mds/MDatePicker.vue';
 import MInput from '../components/mds/MInput.vue';
 import MSelect from '../components/mds/MSelect.vue';
 import MTag from '../components/mds/MTag.vue';
@@ -55,6 +56,16 @@ const dlgOpen = ref(false);
 const editing = ref(null);
 const saving = ref(false);
 const form = reactive({ name: '', event_date: '', organizer: '', unit: '', eligibility_field: '', eligibility_values: [] });
+// MDatePicker làm việc với Date object, còn form.event_date lưu chuỗi
+// "yyyy-MM-ddTHH:mm" (đúng định dạng API/DB đang dùng - xem routes/events.js)
+// nên cần computed 2 chiều để chuyển đổi qua lại, không đổi kiểu dữ liệu gửi lên server.
+function pad2(n) { return String(n).padStart(2, '0'); }
+const eventDateValue = computed({
+  get: () => form.event_date ? new Date(form.event_date) : null,
+  set: (d) => {
+    form.event_date = d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}` : '';
+  },
+});
 const eligFields = computed(() => Object.entries(auth.options.eligibility_fields || {}).map(([k, f]) => ({ value: k, label: f.label })));
 const eligOptions = computed(() => {
   const f = auth.options.eligibility_fields?.[form.eligibility_field];
@@ -137,7 +148,7 @@ async function save() {
     <label class="fld">Tên sự kiện *</label>
     <MInput v-model="form.name" placeholder="VD: Hội thảo CEO & AI 2026" />
     <label class="fld">Thời gian tổ chức *</label>
-    <input type="datetime-local" v-model="form.event_date" class="native-dt" />
+    <MDatePicker v-model="eventDateValue" show-time placeholder="dd/MM/yyyy HH:mm" />
     <label class="fld">Trưởng ban tổ chức</label>
     <MInput v-model="form.organizer" />
     <template v-if="auth.user.role === 'super_admin'">
@@ -164,7 +175,5 @@ async function save() {
 .ev-name.clickable:hover { text-decoration: underline; }
 .ev-meta { font-size: 13px; margin-top: 4px; }
 .ev-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.native-dt { width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--mds-border); border-radius: 8px; font-size: 13px; font-family: inherit; color: var(--mds-text); }
-.native-dt:focus { outline: 2px solid var(--mds-brand-600); outline-offset: -1px; border-color: var(--mds-brand-600); }
 .elig { border: 1px dashed var(--app-border); border-radius: 10px; padding: 12px; margin-top: 14px; }
 </style>

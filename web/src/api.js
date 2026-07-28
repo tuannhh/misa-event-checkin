@@ -66,6 +66,12 @@ export function eventDayStatus(ev) {
 
 export const ROLE_NAMES = { super_admin: 'Super Admin', admin: 'Admin', checkin: 'Nhân viên check-in' };
 
+// Cấu hình mẫu thẻ in (tem QR khách) riêng của sự kiện - lưu JSON thô ở events.badge_layout
+// (xem BadgesTab.vue "Tuỳ chỉnh mẫu thẻ" + lib/print.js). null = dùng mặc định DEFAULT_BADGE_LAYOUT.
+export function badgeLayout(ev) {
+  try { return ev?.badge_layout ? JSON.parse(ev.badge_layout) : null; } catch { return null; }
+}
+
 // Quyền tick-chọn (Đợt 2) - thay cho staff_type cứng. `ev.my_permissions` do backend trả theo
 // nhóm chức năng đã gán (xem routes/lib/permissions.js). Dùng can(ev, 'checkin') thay vì so
 // sánh staff_type ở khắp nơi.

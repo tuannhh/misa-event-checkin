@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { api, auth, fmtDate } from '../../api';
+import { api, auth, fmtDate, badgeLayout } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import { printQr } from '../../lib/print';
 import MButton from '../../components/mds/MButton.vue';
@@ -91,19 +91,18 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
 </script>
 
 <template>
-  <div v-if="canManage" class="toolbar">
-    <MButton variant="primary" @click="openAdd">+ Thêm người</MButton>
-    <a class="lnk-btn" href="/api/attendees/template" download><MIcon name="download" /> Excel mẫu</a>
-    <MButton variant="secondary" @click="fileInput.click()"><MIcon name="upload" /> Tải lên Excel</MButton>
-    <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
-    <MButton variant="secondary" :disabled="!unsent" @click="sendAll"><MIcon name="mail" /> Gửi QR cho người chưa nhận ({{ unsent }})</MButton>
-  </div>
-
   <div class="toolbar">
     <div style="flex:1;min-width:220px"><MInput v-model="q" placeholder="Tìm theo tên, công ty, SĐT, email..." clearable><template #prefix><MIcon name="search" /></template></MInput></div>
     <div class="toolbar-select"><MSelect v-model="fImp" :options="opt(auth.options.importances, 'Tất cả mức độ')" /></div>
     <div class="toolbar-select"><MSelect v-model="fPos" :options="opt(auth.options.positions, 'Tất cả chức vụ')" /></div>
     <div class="toolbar-select"><MSelect v-model="fStatus" :options="[{ value: '', label: 'Tất cả trạng thái' }, { value: 'in', label: 'Đã check-in' }, { value: 'out', label: 'Chưa check-in' }]" /></div>
+    <div v-if="canManage" style="display:flex;gap:10px;flex-wrap:wrap;margin-left:auto">
+      <a class="lnk-btn" href="/api/attendees/template" download><MIcon name="download" /> Excel mẫu</a>
+      <MButton variant="secondary" @click="fileInput.click()"><MIcon name="upload" /> Tải lên Excel</MButton>
+      <input ref="fileInput" type="file" accept=".xlsx,.xls" hidden @change="onImport" />
+      <MButton variant="secondary" :disabled="!unsent" @click="sendAll"><MIcon name="mail" /> Gửi QR cho người chưa nhận ({{ unsent }})</MButton>
+      <MButton variant="primary" @click="openAdd">+ Thêm người</MButton>
+    </div>
   </div>
 
   <div v-if="canManage && selected.length" class="bulk">
@@ -121,7 +120,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
     <table class="tbl">
       <thead><tr>
         <th v-if="canManage" style="width:34px"></th>
-        <th>Họ và tên</th><th>Mức độ</th><th>Email</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Email</th><th></th>
+        <th>Họ và tên</th><th>Mức độ</th><th>Email</th><th title="Số điện thoại">SĐT</th><th>Công ty</th><th>Check-in</th><th>Email</th><th></th>
       </tr></thead>
       <tbody>
         <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
@@ -146,11 +145,11 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
             <span v-if="canManage" class="cell-actions" style="justify-content:flex-end">
               <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
               <MButton variant="secondary" size="md" @click="showQr(r)">QR</MButton>
-              <MButton variant="danger" size="md" @click="del(r)"><MIcon name="trash" /></MButton>
+              <MButton variant="danger" size="md" title="Xoá khỏi danh sách" @click="del(r)"><MIcon name="trash" /></MButton>
             </span>
           </td>
         </tr>
-        <tr v-if="!filtered.length"><td :colspan="canManage ? 9 : 8" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>
+        <tr v-if="!filtered.length"><td :colspan="canManage ? 9 : 8" class="muted" style="padding:20px;text-align:center">{{ rows.length ? 'Không tìm thấy ai phù hợp với bộ lọc.' : 'Chưa có người tham dự nào.' }}</td></tr>
       </tbody>
     </table>
   </div>
@@ -163,7 +162,7 @@ function showQr(r) { qrRow.value = r; qrDlg.value = true; }
     <div v-if="qrRow" style="text-align:center">
       <img :src="`/api/attendees/${qrRow.id}/qr.png`" style="width:240px" />
       <div style="font-family:monospace;font-size:12px;color:#6b7280;margin-top:6px">{{ qrRow.qr_token }}</div>
-      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow, props.ev.id)"><MIcon name="printer" /> In tem QR (50×50mm)</MButton>
+      <MButton variant="secondary" style="margin-top:10px" @click="printQr(qrRow, props.ev.id, badgeLayout(props.ev))"><MIcon name="printer" /> In thẻ (100×75mm)</MButton>
     </div>
   </MDialog>
 </template>

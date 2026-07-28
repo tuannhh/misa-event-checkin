@@ -74,7 +74,7 @@ async function onImport(e) {
     </div>
   </div>
 
-  <div class="card" style="padding:0;overflow:hidden">
+  <div class="card" style="padding:0;overflow-x:auto">
     <table class="tbl">
       <thead><tr><th>Họ và tên</th><th>Bộ phận</th><th>Đơn vị</th><th>Email</th><th>Vai trò</th><th></th></tr></thead>
       <tbody>
@@ -87,10 +87,11 @@ async function onImport(e) {
           <td style="white-space:nowrap;text-align:right">
             <span class="cell-actions" style="justify-content:flex-end">
               <MButton v-if="u.role !== 'super_admin' || auth.user.id === u.id" variant="secondary" size="md" @click="openEdit(u)">Sửa</MButton>
-              <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" @click="del(u)"><MIcon name="trash" /></MButton>
+              <MButton v-if="u.role !== 'super_admin'" variant="danger" size="md" title="Xoá thành viên" @click="del(u)"><MIcon name="trash" /></MButton>
             </span>
           </td>
         </tr>
+        <tr v-if="!users.length"><td colspan="6" class="muted" style="padding:20px;text-align:center">Chưa có thành viên nào.</td></tr>
       </tbody>
     </table>
   </div>

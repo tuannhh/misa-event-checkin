@@ -8,6 +8,7 @@ import MIcon from './components/mds/MIcon.vue';
 import MHeaderBar from './components/mds/MHeaderBar.vue';
 import MSidebar from './components/mds/MSidebar.vue';
 import MSettingsDialog from './components/mds/MSettingsDialog.vue';
+import MDropdownMenu from './components/mds/MDropdownMenu.vue';
 import LoginView from './views/LoginView.vue';
 import logoUrl from './assets/logo.svg';
 import logoIconUrl from './assets/logo-icon.svg';
@@ -42,6 +43,14 @@ const headerUser = computed(() => auth.user ? {
 
 const settingsOpen = ref(false);
 
+const userInitials = computed(() => {
+  const words = (auth.user?.name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  return (words.length >= 2 ? words[0][0] + words[1][0] : words[0].slice(0, 2)).toUpperCase();
+});
+const userMenuItems = [{ key: 'logout', label: 'Đăng xuất', icon: 'logout', danger: true }];
+function onUserMenuSelect(key) { if (key === 'logout') doLogout(); }
+
 async function doLogout() { await logout(); router.replace('/events'); }
 </script>
 
@@ -75,8 +84,21 @@ async function doLogout() { await logout(); router.replace('/events'); }
           <template #logo>
             <img :src="logoIconUrl" alt="MISA Check-in" class="header-logo" />
           </template>
-          <template #actions>
-            <button class="logout" @click="doLogout">Đăng xuất</button>
+          <template #user>
+            <MDropdownMenu :items="userMenuItems" placement="bottom-end" @select="onUserMenuSelect">
+              <template #activator="{ open }">
+                <button
+                  type="button"
+                  class="ml-1 h-8 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--mds-brand-100)] text-[12px] font-semibold text-[var(--mds-brand-700)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mds-brand-600)]"
+                  :class="open ? 'ring-2 ring-[var(--mds-brand-600)]' : ''"
+                  :title="headerUser?.name"
+                  aria-haspopup="menu"
+                  :aria-expanded="open"
+                >
+                  <span class="flex h-full w-full items-center justify-center">{{ userInitials }}</span>
+                </button>
+              </template>
+            </MDropdownMenu>
           </template>
         </MHeaderBar>
         <div class="app-body">
@@ -100,8 +122,6 @@ async function doLogout() { await logout(); router.replace('/events'); }
 .app-body { flex: 1; display: flex; overflow: hidden; }
 .app-content { flex: 1; overflow-y: auto; background: var(--mds-bg-page, #ECEDEF); }
 .header-logo { height: 28px; width: auto; display: block; }
-.logout { border: 1px solid var(--mds-border); background: var(--mds-bg); color: var(--mds-text); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; font-weight: 600; }
-.logout:hover { background: var(--mds-bg-hover-soft); }
 
 /* Shell mobile-first cho nhân viên hiện trường - cột nội dung tối đa 480px, CĂN GIỮA bất kể
    màn hình rộng bao nhiêu (kể cả "Desktop site" trên Android). Bottom nav thật nằm trong

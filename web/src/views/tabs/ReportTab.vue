@@ -1,6 +1,6 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { api, fmtDate } from '../../api';
+import { api, fmtDate, badgeLayout } from '../../api';
 import { useToast } from '../../components/mds/toast.js';
 import { printQr } from '../../lib/print';
 import MButton from '../../components/mds/MButton.vue';
@@ -120,8 +120,8 @@ async function save() {
     <div class="card" style="padding:0;overflow-x:auto">
       <table class="tbl">
         <thead><tr>
-          <th>Họ và tên</th><th>Mức độ</th><th>SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian</th>
-          <th>Booth đã ghé</th><th><MIcon name="pencil" /> Ghi chú giám sát</th><th><MIcon name="star" /> Tiềm năng</th><th>NV check-in</th><th v-if="canManage"></th>
+          <th>Họ và tên</th><th>Mức độ</th><th title="Số điện thoại">SĐT</th><th>Công ty</th><th>Check-in</th><th>Thời gian</th>
+          <th>Booth đã ghé</th><th><MIcon name="pencil" /> Ghi chú giám sát</th><th><MIcon name="star" /> Tiềm năng</th><th title="Nhân viên check-in">NV check-in</th><th v-if="canManage"></th>
         </tr></thead>
         <tbody>
           <tr v-for="r in filtered" :key="r.id" :style="r.eligible ? '' : 'background:#fef2f2'">
@@ -161,11 +161,11 @@ async function save() {
             <td v-if="canManage" style="white-space:nowrap;text-align:right">
               <span class="cell-actions" style="justify-content:flex-end">
                 <MButton variant="secondary" size="md" @click="openEdit(r)">Sửa</MButton>
-                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r, props.ev.id)"><MIcon name="printer" /></MButton>
+                <MButton v-if="r.checked_in_at" variant="secondary" size="md" @click="printQr(r, props.ev.id, badgeLayout(props.ev))"><MIcon name="printer" /> In thẻ</MButton>
               </span>
             </td>
           </tr>
-          <tr v-if="!filtered.length"><td :colspan="canManage ? 11 : 10" class="muted" style="padding:20px;text-align:center">Không có ai phù hợp.</td></tr>
+          <tr v-if="!filtered.length"><td :colspan="canManage ? 11 : 10" class="muted" style="padding:20px;text-align:center">{{ d.rows.length ? 'Không tìm thấy ai phù hợp với bộ lọc.' : 'Chưa có người tham dự nào.' }}</td></tr>
         </tbody>
       </table>
     </div>

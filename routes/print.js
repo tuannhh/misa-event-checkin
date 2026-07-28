@@ -76,7 +76,8 @@ router.post('/events/:id/print', requireLogin, async (req, res) => {
   const a = await db.prepare('SELECT * FROM attendees WHERE id = ? AND event_id = ?').get(req.body.attendee_id, ev.id);
   if (!a) return res.status(404).json({ error: 'Không tìm thấy khách' });
 
-  const payload = buildAttendeeLabel({ token: a.qr_token, name: (a.salutation ? a.salutation + ' ' : '') + a.name, company: a.company });
+  let layout; try { layout = ev.badge_layout ? JSON.parse(ev.badge_layout) : null; } catch { layout = null; }
+  const payload = buildAttendeeLabel({ token: a.qr_token, name: (a.salutation ? a.salutation + ' ' : '') + a.name, position: a.position, company: a.company, importance: a.importance, layout });
   const info = await db.prepare('INSERT INTO print_jobs (event_id, station_id, kind, ref_id, payload) VALUES (?,?,?,?,?)')
     .run(ev.id, station.id, 'attendee_qr', a.id, payload);
 

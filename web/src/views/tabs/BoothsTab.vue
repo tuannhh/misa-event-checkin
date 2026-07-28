@@ -50,7 +50,7 @@ async function delBooth(b) {
           <b>{{ b.name }}</b><br>
           <span class="muted"><MIcon name="user" /> {{ (staffByBooth[b.id] || []).length ? staffByBooth[b.id].join(', ') : 'chưa gán ai' }}</span>
         </div>
-        <MButton v-if="canManage" variant="danger" size="md" @click="delBooth(b)"><MIcon name="trash" /></MButton>
+        <MButton v-if="canManage" variant="danger" size="md" title="Xoá booth" @click="delBooth(b)"><MIcon name="trash" /></MButton>
       </div>
     </div>
     <p v-else class="muted">Chưa có booth nào.</p>

@@ -6,6 +6,10 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
  * Cho phép GÕ TAY vào input (parse khi blur/Enter, gõ sai thì revert)
  * hoặc chọn trên lịch popover. Picker KHÔNG có nút Đồng ý → chọn ngày
  * là submit và đóng popover luôn (quy tắc chung MDS).
+ *
+ * showTime: true → thêm 2 ô giờ/phút trong popover, format input thành
+ * dd/MM/yyyy HH:mm, thay cho <input type="datetime-local"> gốc trình
+ * duyệt (không đồng bộ giao diện, không style được theo MDS).
  */
 const props = defineProps({
   modelValue: { type: Date, default: null },
@@ -14,6 +18,7 @@ const props = defineProps({
   error: { type: String, default: '' }, // có giá trị → viền danger + message đỏ dưới control
   min: { type: Date, default: null }, // ngày nhỏ nhất chọn được
   max: { type: Date, default: null }, // ngày lớn nhất chọn được
+  showTime: { type: Boolean, default: false }, // true → kết hợp chọn giờ:phút
 })
 
 const emit = defineEmits(['update:modelValue', 'change', 'focus', 'blur'])
@@ -24,18 +29,26 @@ function pad2(n) {
 }
 
 function formatDate(d) {
-  return d ? `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}` : ''
+  if (!d) return ''
+  const base = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`
+  return props.showTime ? `${base} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : base
 }
 
-// Parse chuỗi dd/MM/yyyy → Date; trả null nếu sai định dạng hoặc
-// ngày không tồn tại (vd 31/02/2024 — kiểm tra bằng round-trip)
+// Parse chuỗi dd/MM/yyyy[ HH:mm] → Date; trả null nếu sai định dạng, ngày
+// không tồn tại (vd 31/02/2024), hoặc giờ/phút ngoài khoảng hợp lệ.
 function parseDate(text) {
-  const m = text.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  const re = props.showTime
+    ? /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/
+    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+  const m = text.trim().match(re)
   if (!m) return null
   const day = Number(m[1])
   const month = Number(m[2])
   const year = Number(m[3])
-  const d = new Date(year, month - 1, day)
+  const hours = props.showTime ? Number(m[4]) : 0
+  const minutes = props.showTime ? Number(m[5]) : 0
+  if (props.showTime && (hours > 23 || minutes > 59)) return null
+  const d = new Date(year, month - 1, day, hours, minutes)
   if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
     return null
   }
@@ -78,13 +91,39 @@ const inputRef = ref(null)
 const popoverRef = ref(null)
 const popoverStyle = ref({})
 
+// Ô giờ/phút (chỉ dùng khi showTime) — giữ dạng chuỗi để gõ tự do,
+// clamp về số hợp lệ khi commit.
+const hh = ref(pad2((props.modelValue || today).getHours()))
+const mm = ref(pad2((props.modelValue || today).getMinutes()))
+
 // Đồng bộ text trong input khi giá trị đổi từ bên ngoài
 watch(
   () => props.modelValue,
   (val) => {
     inputText.value = formatDate(val)
+    if (val) {
+      hh.value = pad2(val.getHours())
+      mm.value = pad2(val.getMinutes())
+    }
   }
 )
+
+// Kết hợp ngày (không giờ) với giờ:phút đang chọn trong ô time
+function combineWithTime(dateOnly) {
+  if (!props.showTime) return dateOnly
+  const h = Math.min(23, Math.max(0, parseInt(hh.value, 10) || 0))
+  const mi = Math.min(59, Math.max(0, parseInt(mm.value, 10) || 0))
+  return new Date(dateOnly.getFullYear(), dateOnly.getMonth(), dateOnly.getDate(), h, mi)
+}
+
+// Gõ tay giờ/phút: clamp, cập nhật lại ô hiển thị, áp vào ngày đang chọn
+function commitTime() {
+  const h = Math.min(23, Math.max(0, parseInt(hh.value, 10) || 0))
+  const mi = Math.min(59, Math.max(0, parseInt(mm.value, 10) || 0))
+  hh.value = pad2(h)
+  mm.value = pad2(mi)
+  setValue(combineWithTime(props.modelValue || today))
+}
 
 const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'] // tuần bắt đầu Thứ 2 — chuẩn VN
 
@@ -153,8 +192,12 @@ function closePopover() {
 
 /* ── Chọn giá trị ───────────────────────────────────────────── */
 function setValue(d) {
-  // Chỉ emit khi giá trị thực sự đổi
-  if (!isSameDay(d, props.modelValue)) {
+  // Chỉ emit khi giá trị thực sự đổi — showTime phải so cả giờ/phút,
+  // isSameDay chỉ so ngày nên sẽ bỏ sót lúc người dùng chỉ đổi giờ.
+  const changed = props.showTime
+    ? d?.getTime() !== props.modelValue?.getTime()
+    : !isSameDay(d, props.modelValue)
+  if (changed) {
     emit('update:modelValue', d)
     emit('change', d)
   }
@@ -163,15 +206,16 @@ function setValue(d) {
 
 function selectDay(cell) {
   if (cell.isDisabled) return
-  setValue(startOfDay(cell.date))
-  closePopover()
+  setValue(combineWithTime(startOfDay(cell.date)))
+  // showTime: giữ popover mở để chọn giờ ngay sau khi chọn ngày
+  if (!props.showTime) closePopover()
 }
 
 // Nút tắt "Hôm nay" ở footer — chọn nhanh ngày hiện tại
 function selectToday() {
   if (isOutOfRange(today)) return
-  setValue(today)
-  closePopover()
+  setValue(combineWithTime(today))
+  if (!props.showTime) closePopover()
 }
 
 /* ── Điều hướng header ──────────────────────────────────────── */
@@ -465,14 +509,52 @@ onBeforeUnmount(() => {
 
           <div class="mt-2 border-t border-[var(--mds-border)]" />
 
-          <!-- Footer: nút tắt "Hôm nay" (Button Text màu Brand, size Small) -->
-          <div class="flex justify-center px-2 pt-2">
+          <!-- Ô giờ:phút (chỉ khi showTime) -->
+          <div v-if="showTime" class="flex items-center justify-center gap-1.5 px-2 pt-2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0 text-[var(--mds-icon-neutral)]">
+              <path d="M12 12l3 2" />
+              <path d="M12 7v5" />
+              <path d="M21 12a9 9 0 1 1 -18 0a9 9 0 0 1 18 0" />
+            </svg>
+            <input
+              v-model="hh"
+              type="text"
+              inputmode="numeric"
+              maxlength="2"
+              aria-label="Giờ"
+              class="h-7 w-9 rounded border border-[var(--mds-border)] text-center text-[13px] leading-[18px] text-[var(--mds-text)] outline-none focus:border-[var(--mds-brand-600)]"
+              @blur="commitTime"
+              @keydown.enter="commitTime"
+            />
+            <span class="text-[13px] font-medium text-[var(--mds-text)]">:</span>
+            <input
+              v-model="mm"
+              type="text"
+              inputmode="numeric"
+              maxlength="2"
+              aria-label="Phút"
+              class="h-7 w-9 rounded border border-[var(--mds-border)] text-center text-[13px] leading-[18px] text-[var(--mds-text)] outline-none focus:border-[var(--mds-brand-600)]"
+              @blur="commitTime"
+              @keydown.enter="commitTime"
+            />
+          </div>
+
+          <!-- Footer: nút tắt "Hôm nay" + "Xong" (khi showTime, cần chốt sau khi chỉnh giờ) -->
+          <div class="flex items-center justify-center gap-2 px-2 pt-2">
             <button
               type="button"
               class="rounded px-2 py-1 text-[13px] leading-[18px] font-medium text-[var(--mds-brand-600)] hover:bg-[var(--mds-bg-hover-soft)] active:text-[var(--mds-brand-800)]"
               @click="selectToday"
             >
               Hôm nay
+            </button>
+            <button
+              v-if="showTime"
+              type="button"
+              class="rounded bg-[var(--mds-brand-600)] px-3 py-1 text-[13px] leading-[18px] font-medium text-white hover:bg-[var(--mds-brand-700)]"
+              @click="commitTime(); closePopover()"
+            >
+              Xong
             </button>
           </div>
         </template>

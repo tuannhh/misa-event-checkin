@@ -566,8 +566,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       cũ nếu chưa cấu hình - đã cập nhật 4 nơi gọi (Reception/Scan/Report/Attendees).
       Tiện sửa luôn 2 lỗi nhỏ đã biết ở bản in qua trình duyệt (không bắt popup bị
       chặn, không tự đóng tab sau in).
-    - **Còn treo cần chủ dự án quyết định**: khổ tem thật 50x30 (theo `CLAUDE.md` cũ)
-      hay 50x50 (theo code hiện tại) - đã nêu ở kế hoạch mục 5, chưa có câu trả lời.
+    - ~~Còn treo: khổ tem thật 50x30 hay 50x50~~ → **đã chốt 100×75mm (A7)**, xem mục 27.
     - **Chưa làm**: in phôi thẻ (badge) qua trạm - hiện chỉ hỗ trợ tem QR khách, phôi
       thẻ vẫn theo luồng ZIP gửi nhà in như cũ (không đổi, không cần đổi).
 23. **Đợt 5 (phần 1/2 - Báo cáo chọn cột) HOÀN THÀNH (2026-07-27)** - nhánh
@@ -664,16 +663,165 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
     - Đã tự bấm/hover/tạo sự kiện/chuyển tab/mở dialog Thiết lập trên trình duyệt thật
       (đăng nhập, tạo sự kiện, chuyển đủ 7 tab qua sidebar chính, mở đủ 5 tab dialog
       Thiết lập, đổi theme) - không chỉ đọc code, đúng yêu cầu bắt buộc của skill.
-    - **CHƯA LÀM / hạn chế còn biết**: (1) tab "Thành viên" trong Thiết lập có nút mở
-      dialog con "+ Thêm thành viên" → 2 lớp `MDialog` chồng nhau khi đang mở Thiết
-      lập (MDS cấm chồng dialog) - cách sửa đúng là chuyển cả `MSettingsDialog` sang
-      dạng Drawer full-width trượt từ mép trên theo đúng spec gốc (`header-bar.md` mục
-      3b) thay vì `MDialog` giữa màn hình, chưa làm vì quy mô lớn hơn; (2) ô "Thời gian
-      tổ chức" ở dialog tạo/sửa sự kiện vẫn là `<input type="datetime-local">` gốc
-      trình duyệt (chỉ style lại CSS) - MDS chưa có control ngày+giờ kết hợp sẵn; (3)
-      chưa rà lại từng màn hình theo `data-table.md` (mật độ dòng bảng, resize cột...)
-      - chỉ sửa những gì thấy sai khi chủ dự án chỉ ra qua ảnh chụp, không phải rà toàn
-      bộ 15 màn hình theo checklist đầy đủ.
+    - **CHƯA LÀM / hạn chế còn biết** (đã xử lý mục (1)/(2) ở mục 26 bên dưới,
+      2026-07-28): (3) chưa rà lại từng màn hình theo `data-table.md` (mật độ dòng
+      bảng, resize cột...) - chỉ sửa những gì thấy sai khi chủ dự án chỉ ra qua ảnh
+      chụp, không phải rà toàn bộ 15 màn hình theo checklist đầy đủ. Vẫn còn treo.
+
+26. **Sửa 3 lỗi UI tồn đọng từ mục 25 (2026-07-28)** - nhánh `backend-refactor-d1`:
+    - **Nút "Đăng xuất" đặt sai vị trí** (trước nằm ở cụm tiện ích header, trước nút
+      Thiết lập, dạng text - sai chuẩn MDS vì identity phải nằm ở avatar ngoài cùng
+      bên phải): chuyển vào dropdown menu mở từ avatar (`App.vue` dùng slot `#user`
+      của `MHeaderBar` + `MDropdownMenu.vue` có sẵn nhưng trước đó chưa ai dùng tới).
+      Thêm icon `logout` vào bảng icon của `MDropdownMenu.vue`.
+    - **2 lớp `MDialog` chồng nhau khi mở "+ Thêm thành viên" trong tab Thành viên
+      của dialog Thiết lập**: nguyên nhân là dialog con (`MembersView.vue`) nằm LỒNG
+      bên trong slot nội dung của dialog cha (`MSettingsDialog.vue`) - cả 2 dùng
+      chung `MDialog.vue`, mỗi cái tự vẽ 1 lớp backdrop z-index 1000 độc lập, code
+      cũ chỉ `console.warn` chứ không xử lý. Sửa: thêm stack toàn cục các dialog
+      đang mở (`components/mds/dialog-stack.js` - PHẢI để ở module `.js` thường,
+      **không khai báo `reactive([])` ngay trong `<script setup>` của `MDialog.vue`
+      vì `<script setup>` chạy lại cho MỖI instance nên không dùng chung được giữa
+      các dialog** - đã tự vấp lỗi này khi làm, mất khá nhiều vòng debug mới lòi
+      ra). Dialog không phải trên cùng bị ẩn qua `:style="{ display: 'none' }"`
+      (không phải unmount qua `v-if`/`v-show`) - vì dialog con nằm lồng trong DOM
+      của dialog cha, unmount cha sẽ unmount luôn con (mất state, đóng nhầm con);
+      cũng KHÔNG dùng directive `v-show` kết hợp `v-if` trên cùng 1 thẻ vì Vue
+      compiler âm thầm bỏ qua tổ hợp này lúc build (không warning, không lỗi - chỉ
+      phát hiện được khi kiểm tra `getAttribute('style')` sau build thực tế). Phím
+      Esc cũng chỉ xử lý ở dialog trên cùng (`isTop`), tránh đóng nhầm cả 2 lớp.
+    - **Input "Thời gian tổ chức" ở dialog tạo/sửa sự kiện (`EventsView.vue`) là
+      `<input type="datetime-local">` gốc trình duyệt**: thay bằng `MDatePicker.vue`
+      (component MDS có sẵn nhưng trước đó CHƯA từng được dùng ở đâu trong dự án),
+      thêm prop mới `show-time` cho nó (MDS gốc chưa có control ngày+giờ kết hợp -
+      xem ghi chú cũ ở mục 25) - thêm 2 ô giờ/phút + nút "Xong" trong popover lịch,
+      giữ nguyên `modelValue` kiểu `Date`. Bẫy đã vấp: hàm `setValue()` gốc chỉ so
+      sánh NGÀY (`isSameDay`) để quyết định có emit `update:modelValue` không - khi
+      `showTime=true` mà người dùng chỉ đổi giờ (ngày không đổi), so sánh này luôn
+      trả về "không đổi" nên giờ mới bị âm thầm rớt mất, phải so cả `getTime()` khi
+      `showTime`. `EventsView.vue` giữ nguyên kiểu dữ liệu gửi API là chuỗi
+      `"yyyy-MM-ddTHH:mm"` (không đổi sang ISO/UTC) qua 1 `computed` chuyển đổi
+      2 chiều Date↔chuỗi, để không phá hành vi cũ ở `routes/events.js`.
+    - Đã tự dựng MySQL+Redis bằng `docker-compose.internal.yml` +
+      `docker-compose.override.yml` (cổng 3311/6391) để chạy `npm start` local thật
+      và test 3 việc trên bằng cả tương tác UI lẫn gọi DOM/API trực tiếp (không chỉ
+      đọc code) - container + `.env` test đã dọn (`docker compose down -v` + xoá
+      `.env`) sau khi xong, không ảnh hưởng production.
+
+27. **Chốt khổ thẻ in + thiết kế lại theo mẫu chủ dự án + nút "In thẻ" ở Báo cáo
+    (2026-07-28)** - nhánh `backend-refactor-d1`. Chủ dự án gửi file mẫu thiết kế
+    ("MẪU THẺ.pdf": QR giữa trên, Họ tên IN HOA đậm, Chức danh, Tên công ty, Mức độ
+    quan trọng IN HOA đậm dưới cùng, khổ **100×75mm (A7)**) - **chốt luôn việc treo
+    từ mục 22/26** (trước phân vân 50×30 hay 50×50mm theo `CLAUDE.md` cũ/code cũ).
+    - `lib/tspl.js` (`buildAttendeeLabel`): đổi `SIZE 50 mm,50 mm` → `SIZE 100 mm,75
+      mm`, thêm tham số `position`/`importance` (trước chỉ có `name`/`company`), sắp
+      lại toạ độ dot đúng thứ tự mẫu (QR căn giữa trên → tên → chức danh → công ty →
+      mức độ, chữ hoa toàn bộ qua `.toUpperCase()`). `routes/print.js` (gửi lệnh in
+      qua trạm LAN/Agent) truyền thêm `a.position`/`a.importance` từ hàng DB có sẵn
+      (không cần đổi schema, 2 cột này đã có sẵn ở `attendees`).
+    - `web/src/lib/print.js` (`printQrViaBrowser` - bản in qua trình duyệt/USB dự
+      phòng): viết lại HTML/CSS `@page{size:100mm 75mm}`, hiển thị đủ 4 dòng tên/chức
+      danh/công ty/mức độ đúng thứ tự mẫu; ẩn dòng mức độ nếu là "Bình thường" (mặc
+      định, không phải khách đặc biệt) để đỡ rối mắt - chỉ hiện khi có giá trị khác.
+    - Cập nhật 2 điểm gọi `printQr()`: `AttendeesTab.vue` đổi nhãn nút "50×50mm" →
+      "100×75mm"; `ReceptionTab.vue` (in ngay khi thêm khách vãng lai) truyền thêm
+      `position`/`importance` từ form (trước chỉ gửi `name`/`company`, thiếu 2
+      trường mới nên khách vãng lai in ra thẻ cụt).
+    - **Thêm nút "In thẻ" có nhãn chữ ở tab Báo cáo** (`ReportTab.vue` dòng nút hành
+      động mỗi người) - trước đó CHỈ có icon máy in không chữ, dễ bị bỏ sót; theo
+      đúng yêu cầu "khi khách check-in xong, không tự in được từ điện thoại thì in
+      thủ công từ Báo cáo trên máy tính" (luồng dự phòng này đã có sẵn từ Đợt 4, chỉ
+      thiếu nhãn rõ ràng).
+    - **Bẫy môi trường dev đã vấp khi test**: sửa `lib/tspl.js` xong nhưng gọi lệnh
+      in qua trạm vẫn ra payload CŨ (50×50mm) - vì `npm start` (Node, không phải
+      Vite) KHÔNG tự nạp lại code khi sửa file `require()` thường (không có hot
+      reload như phía Vite/FE) - phải tắt hẳn tiến trình Node cũ và chạy lại mới
+      thấy code mới. Nhớ quy tắc này cho mọi lần sửa file phía backend (`lib/`,
+      `routes/`) trong lúc server đang chạy.
+    - **Đã verify bằng dữ liệu thật, không chỉ đọc code**: tạo khách vãng lai qua API
+      (tên/chức danh/công ty/mức độ "Speaker" giống mẫu) → bấm "In thẻ" ở Báo cáo
+      trên UI thật → chặn `window.open` để đọc đúng HTML sinh ra → render lại xem
+      bằng mắt, bố cục khớp mẫu. Dựng thêm 1 TCP server giả lập máy in ở cổng 9100 →
+      gọi thật `POST /events/:id/print` qua trạm LAN → nhận đúng byte lệnh TSPL khổ
+      100×75mm kèm đủ 4 dòng. Môi trường test (Docker MySQL/Redis + `.env`) đã dọn
+      sau khi xong.
+
+28. **Bố cục thẻ đẹp hơn + màn "Tuỳ chỉnh mẫu thẻ" + build thử Print Agent .exe
+    (2026-07-28)** - nhánh `backend-refactor-d1`. Chủ dự án phản hồi bố cục ở mục 27
+    "xấu, thừa nhiều khoảng trắng" sau khi xem ảnh chụp thật, kèm 2 yêu cầu mới.
+    - **Sửa bố cục `web/src/lib/print.js`**: QR 26mm→34mm, tên 15px→20px; bỏ
+      `margin-top:auto` (đẩy mức độ quan trọng dồn cứng xuống đáy thẻ, tạo 1 khoảng
+      trắng lớn liền mạch ở giữa) → đổi thành margin cố định nhỏ giữa các dòng, phần
+      dư (nếu có) rơi xuống mép dưới tự nhiên hơn - khớp đúng tỉ lệ mẫu PDF hơn hẳn
+      (đã tự chụp ảnh so sánh trước/sau). Thêm `onerror` cho ảnh QR để vẫn tự in/đóng
+      cửa sổ nếu QR lỗi tải (trước đó treo popup mãi mãi nếu ảnh lỗi).
+    - **Màn "Tuỳ chỉnh mẫu thẻ" mới** (thẻ "Mẫu thẻ in" cuối tab Phôi thẻ,
+      `BadgesTab.vue`) - đáp ứng yêu cầu "thiết lập từng thành phần trong tem", chủ dự
+      án chọn mức **đơn giản** (không phải canvas kéo-thả): `MRadioGroup` 3 mốc
+      Nhỏ/Vừa/Lớn cho cỡ QR + cỡ chữ tên khách, `MCheckbox` bật/tắt Chức danh/Công
+      ty/Mức độ quan trọng, có **preview trực quan cập nhật ngay khi tick/chọn**
+      (không phải xem sau khi lưu). Lưu theo TỪNG SỰ KIỆN ở cột mới
+      `events.badge_layout` (JSON, migration
+      `20260728010000_badge_layout.js`) qua `PUT /events/:id/badge-layout` (mới).
+    - **1 cấu hình dùng chung cho CẢ 2 đường in** (đúng yêu cầu "chỉnh 1 chỗ áp dụng
+      hết", tránh lệch giữa in qua trạm và in qua trình duyệt): cùng khái niệm mốc
+      `sm/md/lg`, `lib/tspl.js` map sang cell-size/font-token TSPL (`QR_CELL`/
+      `NAME_FONT` - **ước lượng, CHƯA test trên máy in vật lý thật**), `web/src/lib/
+      print.js` map sang mm/px (`QR_MM`/`NAME_PX`). `routes/print.js` đọc
+      `ev.badge_layout` khi build lệnh in qua trạm; 4 nơi gọi `printQr()` (Quét QR/Lễ
+      tân/Người tham dự/Báo cáo) đọc qua helper `badgeLayout(ev)` mới trong `api.js`.
+    - **Build thử `print-agent/dist/misa-checkin-print-agent.exe`** lần đầu (source
+      code có sẵn từ Đợt 4 nhưng trước đó CHƯA ai từng chạy `npm run build`) - `pkg`
+      cross-compile `node18-win-x64` chạy được từ máy Mac, không cần máy Windows để
+      build. Đã gửi file cho chủ dự án. **Vẫn CHƯA test được với Windows/máy in vật
+      lý thật** (môi trường không có) - cần chủ dự án tự chạy thử + báo lại.
+    - **Đã verify qua UI thật + gọi API/TCP trực tiếp**: mở dialog Tuỳ chỉnh mẫu thẻ,
+      đổi cỡ Lớn + tắt "Công ty" → xem preview đổi ngay → Lưu → gọi lại
+      `GET /events/:id` xác nhận `badge_layout` lưu đúng JSON → gọi thật
+      `POST /events/:id/print` qua trạm giả lập (TCP cổng 9100) → nhận đúng lệnh
+      TSPL cell size 10 (Lớn), font "5" (Lớn), **thiếu đúng dòng công ty** (đã tắt).
+      Môi trường test đã dọn sau khi xong.
+
+29. **Rà soát UI 15 màn hình theo `data-table.md` - HOÀN THÀNH (2026-07-28)** - việc
+    treo cuối cùng của Đợt 5 (mục 25/26). Dùng 3 agent song song đọc + đối chiếu
+    checklist RÚT GỌN phù hợp quy mô app (bỏ các mục doanh nghiệp phức tạp không cần
+    thiết - resize/pin/filter-theo-cột/split-button; xem `KE-HOACH-NANG-CAP-2026-07.md`
+    triết lý "không vẽ rắn thêm chân"). Đã tự verify lại bằng UI thật (đăng nhập
+    nhiều vai trò khác nhau, tạo dữ liệu qua API, chụp ảnh trước/sau) trước khi coi
+    là xong, không chỉ dựa báo cáo của agent.
+    - **Bug thật đã sửa** (không chỉ polish): `MonitorTab.vue` - điều kiện empty-state
+      kiểm tra `data.rows.length` (tổng chưa lọc) thay vì `filtered.length` → gõ tìm
+      kiếm không khớp thì **cả empty-state lẫn danh sách đều không hiện gì**, màn
+      hình trắng trơn giữa toolbar và cuối trang. Sửa: thêm nhánh `else-if
+      !filtered.length` riêng.
+    - **`MembersView.vue`**: bảng bọc `overflow:hidden` (chặn cuộn) thay vì
+      `overflow-x:auto` → trên màn hẹp bị **cắt cụt cột**, không cuộn được. Đổi lại
+      đúng như các bảng khác. Thêm dòng "Chưa có thành viên nào" khi rỗng (trước đó
+      không có empty-state).
+    - **Toolbar gộp lại đúng chuẩn "tìm kiếm trái - action phải" trong CÙNG 1 hàng**
+      (trước tách 2 hàng riêng, action không đẩy sang phải): `AttendeesTab.vue` (gộp
+      Thêm/Import/Export/Gửi QR vào chung hàng search+filter, nút Primary "+ Thêm
+      người" đẩy về ngoài cùng bên phải theo đúng quy tắc MDS); `BadgesTab.vue` (bỏ
+      card "Sinh & xuất phôi thẻ" riêng, gộp nút xuất ZIP + sinh phôi vào hàng
+      search+filter của chính bảng phôi thẻ đó).
+    - **Phân biệt empty-state "chưa có dữ liệu" khác "lọc/tìm kiếm ra rỗng"** (trước
+      dùng chung 1 câu gây hiểu nhầm) ở `AttendeesTab.vue`, `ReportTab.vue`,
+      `ReceptionTab.vue`, `BadgesTab.vue`.
+    - **Thêm `title` (tooltip) cho nút icon-only và tiêu đề cột viết tắt** (trước
+      thiếu, vi phạm quy tắc MDS "icon/tiêu đề viết tắt phải có tooltip"): nút xoá ở
+      `AttendeesTab.vue`/`BoothsTab.vue`/`MembersView.vue`, cột "SĐT"/"NV check-in" ở
+      `AttendeesTab.vue`/`ReportTab.vue`.
+    - **Cân nhắc nhưng KHÔNG đổi** (ghi lại lý do để khỏi hỏi lại): agent đề xuất
+      right-align cột "Booth đã ghé" ở `ReportTab.vue` (số liệu cần so sánh) - bỏ qua
+      vì cell này không thuần số (số đếm + danh sách tag ghé booth wrap bên dưới),
+      right-align sẽ làm hỏng bố cục tag; agent đề xuất gom bớt nút hành động dòng ở
+      `AttendeesTab.vue` cho "quá 3 icon" - kiểm tra lại thấy đang đúng đủ 3 (Sửa/QR/
+      Xoá) ở 1 cụm, nút "Gửi"/"Gửi lại" nằm ở CỘT khác (trạng thái email + hành động
+      theo ngữ cảnh cột đó), không tính chung 1 cụm action dòng.
+    - **`EventDetailView.vue`**: agent ghi nhận tab tính năng nằm ở sidebar trái thay
+      vì sub-nav ngang 48px theo `layout-patterns.md` - đây là quyết định thiết kế
+      CHỦ ĐÍCH đã ghi ở mục 25 (tránh sidebar lồng sidebar), không phải lỗi, giữ
+      nguyên.
 
 ---
 
@@ -682,6 +830,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] **Tích hợp thanh toán vé** (misaamis → store.misa.vn → check-in): đã soạn yêu cầu kỹ thuật ở [YEU-CAU-TICH-HOP-THANH-TOAN.md](YEU-CAU-TICH-HOP-THANH-TOAN.md), đang chờ team Store xác nhận có webhook thanh toán không. Khi có: thêm cột `payment_status` cho attendees + API đăng ký công khai + endpoint nhận webhook (xác thực HMAC).
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
+- [ ] `print-agent/dist/misa-checkin-print-agent.exe` đã build thử (2026-07-28, mục 28) nhưng CHƯA test với Windows/máy in vật lý thật — chờ chủ dự án tự chạy + báo lại. Cỡ chữ/QR trong `lib/tspl.js` (font token/cell size) cũng mới là ước lượng, có thể cần chỉnh lại theo máy in thật.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
 - [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
 - [x] ~~Deploy GCE VM~~ → đã triển khai (2026-07-08/09), https://34-87-20-119.sslip.io, xem mục 15.4. Đang chạy 24/7 — nhớ dừng VM (`gcloud compute instances stop`) khi ngừng test để khỏi tốn phí.

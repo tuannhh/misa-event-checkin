@@ -108,6 +108,7 @@ function ghostReset() { ghost.value = null; ghostCode.value = ''; }
     <div class="muted" style="margin-bottom:10px">Có <b>{{ filtered.length }}</b> / {{ data.rows.length }} khách đã ghé booth</div>
 
     <div v-if="!data.rows.length" class="card muted" style="text-align:center;padding:30px">Chưa có khách nào ghé booth. Khách xuất hiện sau khi được quét QR tại booth.</div>
+    <div v-else-if="!filtered.length" class="card muted" style="text-align:center;padding:30px">Không tìm thấy khách phù hợp với "{{ q }}".</div>
 
     <div v-for="r in filtered" :key="r.id" class="card visitor">
       <div class="v-head">

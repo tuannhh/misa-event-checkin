@@ -869,7 +869,7 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
 - [ ] Nhà in xác nhận dùng in dữ liệu biến đổi (VDP) hay cần PDF ghép sẵn — hiện xuất bộ SVG riêng (phù hợp VDP).
 - [ ] Xoá/thu hồi GitHub Personal Access Token đã dùng để đồng bộ code trong quá khứ (nếu chưa làm) — token có quyền write, không có ngày hết hạn.
 - [ ] `print-agent/dist/misa-checkin-print-agent.exe` đã build thử (2026-07-28, mục 28) nhưng CHƯA test với Windows/máy in vật lý thật — chờ chủ dự án tự chạy + báo lại. Cỡ chữ/QR trong `lib/tspl.js` (font token/cell size) cũng mới là ước lượng, có thể cần chỉnh lại theo máy in thật.
-- [ ] Bucket GCS `gs://prapplication-479309-checkin-db/checkin.db` (Litestream backup của Cloud Run production cũ, đã xoá service ở mục 30) vẫn còn tồn tại, chưa xoá — hỏi chủ dự án có muốn dọn nốt không (`gsutil rm -r gs://prapplication-479309-checkin-db`), phí lưu trữ không đáng kể nên không gấp.
+- [x] ~~Bucket GCS `gs://prapplication-479309-checkin-db` (Litestream backup của Cloud Run production cũ)~~ → đã xoá hẳn (2026-07-28, `gsutil -m rm -r`), xác nhận bucket không còn tồn tại.
 - [x] ~~Chốt phương án in tem QR tại hiện trường~~ → đã chuyển sang phôi thẻ in sẵn + in tem USB dự phòng (mục 9.13).
 - [x] ~~Giám sát "bóng ma" + Lucky draw~~ → đã code + test xong (2026-07-08, commit `ddaf920`), xem mục 9.15 và 15.2/15.3.
 - [x] ~~Deploy GCE VM~~ → đã triển khai (2026-07-08/09), https://34-87-20-119.sslip.io, xem mục 15.4. Đang chạy 24/7 — nhớ dừng VM (`gcloud compute instances stop`) khi ngừng test để khỏi tốn phí.

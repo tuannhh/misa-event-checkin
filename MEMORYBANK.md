@@ -822,6 +822,18 @@ Màu chính `--primary:#2563eb`; breakpoint mobile `≤640px`. Class quan trọn
       vì sub-nav ngang 48px theo `layout-patterns.md` - đây là quyết định thiết kế
       CHỦ ĐÍCH đã ghi ở mục 25 (tránh sidebar lồng sidebar), không phải lỗi, giữ
       nguyên.
+    - Sau khi sửa xong: push nhánh `backend-refactor-d1` lên GitHub (commit `5a822b6`)
+      + build lại image `Dockerfile.internal` (đè lên `gcr.io/prapplication-479309/
+      misa-event-checkin-test:latest`) + deploy đè revision mới lên Cloud Run service
+      test đã có sẵn (mục 24) - `misa-event-checkin-test-00003-c47`, KHÔNG tạo
+      service/Cloud SQL mới, không đụng production `misa-event-checkin` (nhánh
+      `main`). **Bẫy build mới gặp**: `docker build`/`docker push` thường (không
+      `buildx`) tạo OCI image index kèm attestation/provenance → Cloud Run từ chối
+      với lỗi "manifest type ... must support amd64/linux" dù ảnh build đúng kiến
+      trúc - phải build bằng `docker buildx build --platform linux/amd64
+      --provenance=false ... --push` mới deploy được. Đã verify lại TRÊN CLOUD RUN
+      THẬT sau deploy: đăng nhập `admin@test.com`, migration mới (`badge_layout`) tự
+      chạy không lỗi, dropdown avatar/Đăng xuất hoạt động đúng.
 
 ---
 
